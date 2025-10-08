@@ -1,33 +1,21 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { getCurrentUser } from "@/lib/auth"
 import type { Agent } from "@/lib/auth"
 import { CreateAgentDialog } from "@/components/create-agent-dialog"
 import { UnifiedActivityCard } from "@/components/unified-activity-card"
 import { ChatDrawer } from "@/components/chat-drawer"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Brain, LogOut, Play, Pause, Trash2, TrendingUp, AlertCircle, CheckCircle2, DollarSign } from "lucide-react"
+import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, CheckCircle2, DollarSign } from "lucide-react"
 import { MOCK_AGENTS, getUnifiedActivities, getAgentMetrics, type UnifiedActivity } from "@/lib/mock-data"
-import { logout } from "@/lib/auth"
 
 export default function DashboardPage() {
-  const router = useRouter()
   const [agents, setAgents] = useState<Agent[]>(MOCK_AGENTS)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [activities, setActivities] = useState<UnifiedActivity[]>([])
 
   useEffect(() => {
-    const user = getCurrentUser()
-    if (!user) {
-      router.push("/login")
-    }
-  }, [router])
-
-  useEffect(() => {
-    // Load unified activities based on selected agent
     const unifiedActivities = getUnifiedActivities(selectedAgentId || undefined)
     setActivities(unifiedActivities.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()))
   }, [selectedAgentId, agents])
@@ -48,7 +36,6 @@ export default function DashboardPage() {
       if (agent.status === "active") activeTasks++
       totalErrors += metrics.errorsEncountered
 
-      // Count from activities
       const agentActivities = selectedAgentId ? activities : activities.filter((a) => a.agentId === agent.id)
 
       const last24h = Date.now() - 24 * 60 * 60 * 1000
@@ -123,8 +110,7 @@ export default function DashboardPage() {
   }
 
   const handleLogout = () => {
-    logout()
-    router.push("/login")
+    window.location.reload()
   }
 
   const statusColors = {
@@ -151,9 +137,6 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-center gap-3">
               <CreateAgentDialog onCreateAgent={handleCreateAgent} />
-              <Button variant="ghost" size="icon" onClick={handleLogout}>
-                <LogOut className="h-4 w-4" />
-              </Button>
             </div>
           </div>
         </div>
