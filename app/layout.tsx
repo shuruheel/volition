@@ -9,6 +9,7 @@ import { Inter, Source_Serif_4 as V0_Font_Source_Serif_4 } from 'next/font/googl
 
 // Initialize fonts
 const _sourceSerif_4 = V0_Font_Source_Serif_4({ subsets: ['latin'], weight: ["200","300","400","500","600","700","800","900"], variable: '--v0-font-source-serif-4' })
+const _v0_fontVariables = V0_Font_Source_Serif_4({ subsets: ['latin'], weight: ["200","300","400","500","600","700","800","900"], variable: '--v0-font-source-serif-4' })
 
 const inter = Inter({
   subsets: ["latin"],
