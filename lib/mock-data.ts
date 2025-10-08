@@ -608,7 +608,7 @@ export const MOCK_ACTIVITIES: AgentActivity[] = [
     agentId: "2",
     type: "task_completed",
     description: "Completed lead qualification task",
-    timestamp: new Date(Date.now() - 90 * 60 * 1000),
+    timestamp: new Date(Date.now() - 90 * 60 * 60 * 1000),
   },
   {
     id: "a6",
@@ -622,7 +622,7 @@ export const MOCK_ACTIVITIES: AgentActivity[] = [
     agentId: "2",
     type: "calendar_event",
     description: "Scheduled a meeting with potential lead",
-    timestamp: new Date(Date.now() - 150 * 60 * 1000),
+    timestamp: new Date(Date.now() - 150 * 60 * 60 * 1000),
   },
   {
     id: "a8",
@@ -1039,45 +1039,6 @@ export const MOCK_UNIFIED_ACTIVITIES: UnifiedActivity[] = [
       reasoning:
         "Based on recent LinkedIn activity and company announcements, the CTO is actively seeking automation solutions. The timing is optimal as they're in the evaluation phase of their modernization project.",
       confidence: 0.85,
-    },
-  },
-  {
-    id: "ua3",
-    agentId: "1",
-    type: "webpage_viewed",
-    status: "completed",
-    priority: "medium",
-    createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000),
-    data: {
-      type: "webpage_viewed",
-      url: "https://openai.com/research/gpt-4",
-      title: "GPT-4 Technical Report",
-      summary:
-        "Comprehensive technical report detailing GPT-4's architecture, capabilities, and safety measures. Discusses improvements over GPT-3.5 including better reasoning, reduced hallucinations, and enhanced safety protocols.",
-      keyTakeaways: [
-        "GPT-4 shows significant improvements in complex reasoning tasks",
-        "Safety measures include RLHF and red-teaming",
-        "Multimodal capabilities enable image understanding",
-      ],
-    },
-  },
-  {
-    id: "ua4",
-    agentId: "1",
-    type: "journal_read",
-    status: "completed",
-    priority: "high",
-    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    data: {
-      type: "journal_read",
-      title: "Mechanistic Interpretability for AI Safety",
-      authors: ["Chris Olah", "Nick Cammarata", "Ludwig Schubert"],
-      journal: "Nature Machine Intelligence",
-      url: "https://example.com/paper1",
-      summary:
-        "This paper explores mechanistic interpretability as a key approach to AI safety. The authors demonstrate techniques for understanding neural network internals and argue that transparency is crucial for alignment.",
-      relevance:
-        "Directly relevant to current research on AI safety approaches. Provides foundational understanding for interpretability work.",
     },
   },
   {

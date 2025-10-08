@@ -8,7 +8,7 @@ import { EmailActivityCard } from "./email-activity-card"
 import { PhoneActivityCard } from "./phone-activity-card"
 import { CalendarActivityCard } from "./calendar-activity-card"
 import { FinancialActivityCard } from "./financial-activity-card"
-import { Globe, FileText, Video, ImageIcon, Mail, Clock, ExternalLink, CheckCircle2, ArrowRight } from "lucide-react"
+import { FileText, Video, ImageIcon, Mail, Clock, ExternalLink, CheckCircle2, ArrowRight } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 
 interface UnifiedActivityCardProps {
@@ -158,10 +158,6 @@ export function UnifiedActivityCard({ activity, agentName, onApprove, onReject, 
 function getActivityIcon(type: UnifiedActivity["type"]) {
   const iconClass = "h-5 w-5"
   switch (type) {
-    case "webpage_viewed":
-      return <Globe className={iconClass} />
-    case "journal_read":
-      return <FileText className={iconClass} />
     case "video_watched":
       return <Video className={iconClass} />
     case "image_seen":
@@ -177,10 +173,6 @@ function getActivityIcon(type: UnifiedActivity["type"]) {
 
 function getActivityTitle(type: UnifiedActivity["type"]) {
   switch (type) {
-    case "webpage_viewed":
-      return "Webpage Viewed"
-    case "journal_read":
-      return "Scientific Journal Read"
     case "video_watched":
       return "Video Watched"
     case "image_seen":
@@ -198,63 +190,6 @@ function renderActivityContent(activity: UnifiedActivity) {
   const data = activity.data
 
   switch (activity.type) {
-    case "webpage_viewed":
-      return (
-        <div className="space-y-3">
-          <div>
-            <a
-              href={data.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium hover:underline flex items-center gap-1"
-            >
-              {data.title}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-            <p className="text-xs text-muted-foreground mt-1">{data.url}</p>
-          </div>
-          <p className="text-sm text-muted-foreground">{data.summary}</p>
-          {data.keyTakeaways && data.keyTakeaways.length > 0 && (
-            <div>
-              <p className="text-xs font-medium mb-2">Key Takeaways:</p>
-              <ul className="space-y-1">
-                {data.keyTakeaways.map((takeaway: string, idx: number) => (
-                  <li key={idx} className="text-xs text-muted-foreground flex items-start gap-2">
-                    <ArrowRight className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>{takeaway}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )
-
-    case "journal_read":
-      return (
-        <div className="space-y-3">
-          <div>
-            <a
-              href={data.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium hover:underline flex items-center gap-1"
-            >
-              {data.title}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-            <p className="text-xs text-muted-foreground mt-1">
-              {data.authors.join(", ")} • {data.journal}
-            </p>
-          </div>
-          <p className="text-sm text-muted-foreground">{data.summary}</p>
-          <div className="bg-muted/50 rounded-lg p-3">
-            <p className="text-xs font-medium mb-1">Relevance:</p>
-            <p className="text-xs text-muted-foreground">{data.relevance}</p>
-          </div>
-        </div>
-      )
-
     case "video_watched":
       return (
         <div className="space-y-3">
