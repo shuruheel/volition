@@ -1,0 +1,428 @@
+---
+description: Vercel AI SDK 6 agent orchestration patterns and tool creation
+globs: lib/ai/**/*
+---
+# AI Agent Orchestration with Vercel AI SDK 6
+
+## Overview
+
+This project uses **Vercel AI SDK 6** with the `ToolLoopAgent` class for agentic workflows.
+
+Documentation: [docs/vercel-ai-sdk-6/agents-overview.md](mdc:docs/vercel-ai-sdk-6/agents-overview.md)
+
+## ToolLoopAgent Pattern
+
+### Basic Agent Setup
+
+```typescript
+// lib/ai/agent.ts
+import { ToolLoopAgent, stepCountIs, tool } from 'ai';
+import { openai } from '@ai-sdk/openai';
+import { z } from 'zod';
+import { supermemoryTools } from '@supermemory/tools/ai-sdk';
+import { browserTaskTool } from './tools/browser-task';
+import { logActivityTool } from './tools/log-activity';
+
+export const createAgentInstance = (agentConfig: {
+  id: string;
+  prompt: string;
+  tools: string[];
+}) => {
+  // Build tools object based on enabled tools
+  const tools: Record<string, any> = {};
+  
+  if (agentConfig.tools.includes('supermemory')) {
+    Object.assign(tools, supermemoryTools(process.env.SUPERMEMORY_API_KEY!));
+  }
+  
+  if (agentConfig.tools.includes('browser_use')) {
+    tools.browserTask = browserTaskTool;
+  }
+  
+  // Always include activity logging
+  tools.logActivity = logActivityTool;
+  
+  return new ToolLoopAgent({
+    model: openai('gpt-4o'),
+    tools,
+    system: agentConfig.prompt,
+    stopWhen: stepCountIs(20), // Safety limit
+  });
+};
+```
+
+### Agent Execution
+
+```typescript
+export async function executeAgentTask(
+  agentId: string,
+  prompt: string,
+  onStepFinish?: (step: any) => void
+) {
+  const agent = await loadAgent(agentId);
+  const agentInstance = createAgentInstance(agent);
+  
+  const result = await agentInstance.generate({
+    prompt,
+    onStepFinish: async ({ text, toolCalls, toolResults, usage, finishReason }) => {
+      // Log each step to database
+      await sql`
+        INSERT INTO agent_steps (agent_id, text, tool_calls, usage)
+        VALUES (${agentId}, ${text}, ${JSON.stringify(toolCalls)}, ${JSON.stringify(usage)})
+      `;
+      
+      // Call custom handler
+      onStepFinish?.({ text, toolCalls, toolResults, usage, finishReason });
+    },
+  });
+  
+  return result;
+}
+```
+
+Reference: [docs/vercel-ai-sdk-6/agents-overview.md](mdc:docs/vercel-ai-sdk-6/agents-overview.md)
+
+## Tool Creation
+
+### Tool Structure
+
+Every AI SDK tool has three parts:
+1. **description** - Helps the LLM decide when to use it
+2. **inputSchema** - Zod schema for validation
+3. **execute** - Async function that performs the action
+
+Reference: [docs/vercel-ai-sdk-6/tool-calling.md](mdc:docs/vercel-ai-sdk-6/tool-calling.md)
+
+### Example: Browser Task Tool
+
+```typescript
+// lib/ai/tools/browser-task.ts
+import { tool } from 'ai';
+import { z } from 'zod';
+import { BrowserUseClient } from 'browser-use-sdk';
+
+const browserClient = new BrowserUseClient({
+  apiKey: process.env.BROWSER_USE_API_KEY!,
+});
+
+export const browserTaskTool = tool({
+  description: 'Execute a browser automation task like web scraping, form filling, or data extraction. Use this for tasks requiring web browser interaction.',
+  
+  inputSchema: z.object({
+    task: z.string().describe('Natural language description of the browser task to perform'),
+    maxSteps: z.number().optional().default(10).describe('Maximum number of steps for the browser agent'),
+    schema: z.any().optional().describe('Optional Zod schema for structured data extraction'),
+  }),
+  
+  execute: async ({ task, maxSteps, schema }) => {
+    try {
+      // Create browser task
+      const browserTask = await browserClient.tasks.createTask({
+        task,
+        maxSteps,
+        schema,
+      });
+      
+      // Poll for completion
+      const result = await browserTask.complete();
+      
+      // Log activity
+      await sql`
+        INSERT INTO activities (agent_id, type, status, payload)
+        VALUES (${agentId}, 'browser_task', 'completed', ${JSON.stringify({
+          task,
+          result: result.output,
+        })})
+      `;
+      
+      return {
+        success: true,
+        output: result.output,
+        parsed: result.parsed,
+      };
+    } catch (error) {
+      console.error('Browser task error:', error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  },
+});
+```
+
+Reference: [docs/browser-use/quickstart.md](mdc:docs/browser-use/quickstart.md)
+
+### Example: Log Activity Tool
+
+```typescript
+// lib/ai/tools/log-activity.ts
+import { tool } from 'ai';
+import { z } from 'zod';
+import { sql } from '@/lib/db';
+
+export const logActivityTool = tool({
+  description: 'Log an activity or action taken by the agent. Use this to record important events, decisions, or completed tasks.',
+  
+  inputSchema: z.object({
+    type: z.enum([
+      'research',
+      'email_sent',
+      'phone_call',
+      'calendar_event_created',
+      'webpage_viewed',
+      'journal_read',
+    ]).describe('Type of activity being logged'),
+    
+    title: z.string().describe('Brief title describing the activity'),
+    
+    description: z.string().optional().describe('Detailed description of the activity'),
+    
+    priority: z.number().min(0).max(10).default(5).describe('Priority level (0-10)'),
+    
+    metadata: z.record(z.any()).optional().describe('Additional metadata as key-value pairs'),
+  }),
+  
+  execute: async ({ type, title, description, priority, metadata }, { messages }) => {
+    // Get agent_id from context (passed via experimental_context)
+    const agentId = messages[0]?.experimental_agentId;
+    
+    const payload = {
+      title,
+      description,
+      metadata,
+    };
+    
+    await sql`
+      INSERT INTO activities (agent_id, type, status, priority, payload)
+      VALUES (${agentId}, ${type}, 'completed', ${priority}, ${JSON.stringify(payload)})
+    `;
+    
+    return {
+      success: true,
+      message: `Activity logged: ${title}`,
+    };
+  },
+});
+```
+
+## Multi-Step Tool Calling
+
+### Using stopWhen
+
+```typescript
+import { generateText, stepCountIs } from 'ai';
+import { openai } from '@ai-sdk/openai';
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  tools: {
+    weather: weatherTool,
+    convertTemperature: convertTool,
+  },
+  stopWhen: stepCountIs(5), // Stop after 5 steps max
+  prompt: 'What is the weather in San Francisco in celsius?',
+});
+
+// Access all steps
+console.log(result.steps); // Array of all tool calls and results
+console.log(result.text);  // Final text response
+```
+
+### Custom Stopping Conditions
+
+```typescript
+import { GenerateTextResult } from 'ai';
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  tools: { /* ... */ },
+  
+  // Custom stopping condition
+  stopWhen: ({ steps, text }: GenerateTextResult) => {
+    // Stop if we've used too many tokens
+    const totalTokens = steps.reduce((sum, step) => sum + (step.usage?.totalTokens ?? 0), 0);
+    if (totalTokens > 10000) return true;
+    
+    // Stop if the agent says it's done
+    if (text.includes('[DONE]')) return true;
+    
+    // Continue
+    return false;
+  },
+  
+  prompt: 'Complete this complex task...',
+});
+```
+
+Reference: [docs/vercel-ai-sdk-6/tool-calling.md](mdc:docs/vercel-ai-sdk-6/tool-calling.md)
+
+## Context Management
+
+### Provide Context to Tools
+
+```typescript
+const result = await agent.generate({
+  prompt: userInput,
+  
+  // Pass context to all tool executions
+  experimental_context: {
+    agentId: agent.id,
+    userId: currentUser.id,
+    sessionId: sessionId,
+  },
+});
+
+// Access in tool execute function
+export const myTool = tool({
+  // ...
+  execute: async (input, { experimental_context }) => {
+    const ctx = experimental_context as { agentId: string; userId: string };
+    // Use ctx.agentId, ctx.userId
+  },
+});
+```
+
+### Message History Management
+
+For longer conversations, compress messages:
+
+```typescript
+const result = await generateText({
+  model: openai('gpt-4o'),
+  messages: conversationHistory,
+  tools: { /* ... */ },
+  
+  prepareStep: async ({ stepNumber, messages }) => {
+    // Keep only recent messages for long conversations
+    if (messages.length > 20) {
+      return {
+        messages: [
+          messages[0], // Keep system message
+          ...messages.slice(-10), // Keep last 10 messages
+        ],
+      };
+    }
+    return {};
+  },
+});
+```
+
+## Observability
+
+### Step Logging
+
+```typescript
+const result = await agent.generate({
+  prompt,
+  
+  onStepFinish: async ({ text, toolCalls, toolResults, usage, finishReason, stepNumber }) => {
+    // Log to database
+    await sql`
+      INSERT INTO agent_steps (
+        agent_id, step_number, text, tool_calls, 
+        tool_results, usage, finish_reason
+      ) VALUES (
+        ${agentId}, ${stepNumber}, ${text}, 
+        ${JSON.stringify(toolCalls)}, ${JSON.stringify(toolResults)},
+        ${JSON.stringify(usage)}, ${finishReason}
+      )
+    `;
+    
+    // Log to console in development
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[Step ${stepNumber}] ${finishReason}`);
+      console.log('Tools called:', toolCalls.map(tc => tc.toolName));
+      console.log('Tokens:', usage.totalTokens);
+    }
+  },
+});
+```
+
+### Usage Tracking
+
+```typescript
+const result = await agent.generate({ prompt });
+
+// Track costs
+const cost = calculateCost(result.usage);
+await sql`
+  UPDATE agents 
+  SET total_spend = total_spend + ${cost}
+  WHERE id = ${agentId}
+`;
+
+console.log('Usage:', {
+  promptTokens: result.usage.promptTokens,
+  completionTokens: result.usage.completionTokens,
+  totalTokens: result.usage.totalTokens,
+  cost,
+});
+```
+
+## Error Handling
+
+### Tool Execution Errors
+
+```typescript
+import { NoSuchToolError, InvalidToolInputError } from 'ai';
+
+try {
+  const result = await agent.generate({ prompt });
+} catch (error) {
+  if (NoSuchToolError.isInstance(error)) {
+    console.error('Model tried to call unknown tool:', error.toolName);
+  } else if (InvalidToolInputError.isInstance(error)) {
+    console.error('Invalid tool input:', error.toolName, error.input);
+  } else {
+    console.error('Agent error:', error);
+  }
+}
+
+// Check tool errors in steps
+const toolErrors = result.steps.flatMap(step =>
+  step.content.filter(part => part.type === 'tool-error')
+);
+
+for (const toolError of toolErrors) {
+  console.error('Tool error:', toolError.toolName, toolError.error);
+}
+```
+
+## Supermemory Integration
+
+Use the `@supermemory/tools` package for memory operations:
+
+```typescript
+import { supermemoryTools } from '@supermemory/tools/ai-sdk';
+
+const tools = {
+  ...supermemoryTools(process.env.SUPERMEMORY_API_KEY!),
+  // Adds: search_memories, store_memory, list_memories
+};
+
+const agent = new ToolLoopAgent({
+  model: openai('gpt-4o'),
+  tools,
+  system: 'You are an AI assistant with long-term memory.',
+});
+```
+
+Reference: [docs/supermemory/memory-tools.md](mdc:docs/supermemory/memory-tools.md)
+
+## Best Practices
+
+1. **Always use Zod schemas** - Validate tool inputs
+2. **Set stopWhen limits** - Prevent infinite loops
+3. **Log steps** - Use onStepFinish for observability
+4. **Handle errors** - Gracefully handle tool execution failures
+5. **Provide good descriptions** - Help the LLM choose the right tool
+6. **Extract tools** - Organize tools in separate files
+7. **Type everything** - Use TypeScript for type safety
+8. **Test tools independently** - Unit test tool execute functions
+
+## Resources
+
+- [AI SDK Documentation](https://v6.ai-sdk.dev)
+- [Agents Overview](https://v6.ai-sdk.dev/docs/agents/overview)
+- [Tool Calling Guide](https://v6.ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling)

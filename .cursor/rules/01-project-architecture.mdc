@@ -1,0 +1,173 @@
+---
+alwaysApply: true
+---
+# Agent Dashboard - Project Architecture
+
+## Tech Stack Overview
+
+This is an AI Agent Dashboard built with:
+- **Next.js 16** (App Router, Route Handlers, React Server Components)
+- **Vercel AI SDK 6** (ToolLoopAgent for agent orchestration)
+- **Neon Postgres** (serverless database with branching)
+- **Supermemory** (graph memory for AI agents)
+- **Browser-Use Cloud** (AI-powered browser automation)
+- **Twilio** (outbound voice calls with OpenAI Realtime API)
+- **TypeScript** (strict mode)
+
+## Project Structure
+
+```
+app/
+├── api/                    # Route Handlers (backend APIs)
+│   ├── agents/            # Agent CRUD operations
+│   ├── activities/        # Activity feed and approvals
+│   ├── metrics/           # Dashboard metrics
+│   ├── memories/          # Supermemory integration
+│   ├── browser/           # Browser-Use Cloud tasks
+│   ├── calls/             # Twilio outbound calls
+│   ├── twilio/            # Twilio webhooks and WebSocket
+│   └── settings/          # Tool configuration
+├── dashboard/             # Main dashboard UI
+├── chat/                  # Chat interface
+├── graph/                 # Knowledge graph visualization
+└── settings/              # Settings page
+
+lib/
+├── ai/
+│   ├── agent.ts          # ToolLoopAgent orchestration
+│   └── tools/            # Custom AI SDK tools
+├── db.ts                 # Neon serverless driver
+├── crypto.ts             # AES-GCM encryption for secrets
+├── auth.ts               # Mock auth (future: Neon Auth)
+└── utils.ts              # Shared utilities
+
+components/
+├── ui/                   # shadcn/ui components
+├── activity-*.tsx        # Activity card variants
+├── unified-activity-card.tsx  # Main activity display
+└── tool-permissions-selector.tsx  # Tool selection UI
+
+db/
+└── migrations/           # SQL migration files
+```
+
+## Database Schema (Neon Postgres)
+
+Core tables:
+- **users**: id, email, name, created_at (minimal for now, auth deferred to v2)
+- **agents**: id, name, prompt, status, tools (string[]), created_at, updated_at
+- **activities**: id, agent_id, type, status, priority, created_at, payload (jsonb)
+- **memories**: id, agent_id, provider_id, kind, created_at, metadata (jsonb)
+- **calls**: id, agent_id, to_number, status, twilio_sid, started_at, ended_at, summary
+- **tool_configs**: id, user_id, tool (enum), data_encrypted (text), created_at, updated_at
+
+Reference: [db/migrations/001_init.sql](mdc:db/migrations/001_init.sql)
+
+## Agent Orchestration Flow
+
+1. **ToolLoopAgent** (Vercel AI SDK 6) manages the agent loop
+2. **Tools** available to agents:
+   - `supermemoryTools()` - Memory operations (store/recall)
+   - `browserTaskTool` - Browser automation via Browser-Use Cloud
+   - `logActivityTool` - Write activities to database
+3. **Safety**: Use `stopWhen` to limit steps, Zod schemas for validation
+4. **Observability**: Use `onStepFinish` to log steps and usage
+
+Reference: [lib/ai/agent.ts](mdc:lib/ai/agent.ts)
+
+## Activity Feed Filtering
+
+**Include these activity types:**
+- `research` - Research tasks completed
+- `email_sent` - Emails sent (future Composio integration)
+- `phone_call` - Phone calls made via Twilio
+- `calendar_event_*` - Calendar events (future Composio integration)
+- `webpage_viewed` - Web pages visited
+- `journal_read` - Journal entries read
+
+**Exclude these activity types:**
+- `video_watched` - Too high frequency
+- `financial` - Deferred to v2
+- `image_seen` - Too high frequency
+- `email_read` - Noise, only show sent emails
+
+Reference: [components/unified-activity-card.tsx](mdc:components/unified-activity-card.tsx)
+
+## Key Metrics Dashboard
+
+Display these 7 key metrics (last 24h):
+1. **Total Spend** - AI API usage costs
+2. **Active Tasks** - Currently running tasks
+3. **Pending Approvals** - Activities awaiting user approval
+4. **Memories Added** - New memories stored (was "Nodes Added")
+5. **Actions Done** - Total actions completed
+6. **Emails Sent** - Emails sent count (future)
+7. **Calls Made** - Phone calls made
+
+**Removed metrics:** Success Rate, Errors (deferred to observability layer)
+
+Reference: [app/dashboard/page.tsx](mdc:app/dashboard/page.tsx)
+
+## Environment Variables
+
+Required:
+```bash
+# AI Models
+OPENAI_API_KEY=sk-...
+
+# Database
+DATABASE_URL=postgresql://...
+DATABASE_URL_POOLED=postgresql://...?pgbouncer=true
+
+# Integrations
+SUPERMEMORY_API_KEY=sm_...
+BROWSER_USE_API_KEY=bu_...
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+1...
+
+# Security
+APP_ENCRYPTION_KEY=...  # 32-byte hex for AES-GCM
+```
+
+## Security Principles
+
+1. **Never expose secrets client-side** - All API keys server-side only
+2. **Encrypt at rest** - Use AES-GCM for tool_configs.data_encrypted
+3. **Validate webhooks** - Always validate Twilio webhook signatures
+4. **Minimal auth** - Mock auth for v1, real auth in v2
+
+Reference: [lib/crypto.ts](mdc:lib/crypto.ts)
+
+## Code Style Guidelines
+
+1. **TypeScript strict mode** - All code fully typed
+2. **Use async/await** - No .then() chains
+3. **Zod schemas** - Validate all external inputs
+4. **Error handling** - Always handle errors in route handlers
+5. **Comments** - Document complex logic and integration points
+6. **Functional components** - Use React hooks, no class components
+
+## Development Workflow
+
+1. **Database migrations** - SQL files in `db/migrations/`
+2. **Route handlers** - Follow Next.js 16 conventions
+3. **AI tools** - Extract tools into separate files
+4. **Testing** - Manual testing with ngrok for webhooks
+5. **Deployment** - Vercel with Neon integration
+
+## Integration Patterns
+
+See dedicated rules for:
+- [Neon Database Integration](mdc:.cursor/rules/02-neon-database.mdc)
+- [AI Agent Orchestration](mdc:.cursor/rules/03-ai-agents.mdc)
+- [Route Handlers](mdc:.cursor/rules/04-route-handlers.mdc)
+- [External Integrations](mdc:.cursor/rules/05-integrations.mdc)
+
+## v2 Features (Deferred)
+
+- Composio Gmail + Google Calendar integration
+- Neon Auth or Auth0 with RBAC
+- Inbound calls + call recordings
+- Usage billing and rate limiting
+- Advanced observability and monitoring

@@ -27,5 +27,5 @@ yarn-error.log*
 next-env.d.ts
 
 .venv/
-.cursor/
-docs/
+.pnpm-store/
+.env.local

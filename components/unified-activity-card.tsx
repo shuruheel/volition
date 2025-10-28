@@ -2,293 +2,304 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import type { UnifiedActivity } from "@/lib/mock-data"
-import { ResearchActivityCard } from "./research-activity-card"
-import { EmailActivityCard } from "./email-activity-card"
-import { PhoneActivityCard } from "./phone-activity-card"
-import { CalendarActivityCard } from "./calendar-activity-card"
-import { FinancialActivityCard } from "./financial-activity-card"
-import { FileText, Video, ImageIcon, Mail, Clock, ExternalLink, CheckCircle2, ArrowRight } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import type { Activity } from "@/lib/db"
+import {
+  FileText,
+  Mail,
+  Phone,
+  Calendar,
+  Globe,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+} from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 
 interface UnifiedActivityCardProps {
-  activity: UnifiedActivity
+  activity: Activity
   agentName: string
-  onApprove?: (activityId: string) => void
-  onReject?: (activityId: string) => void
-  onModify?: (activityId: string, data: any) => void
+  onApprove?: (activityId: string) => void | Promise<void>
+  onReject?: (activityId: string) => void | Promise<void>
+  onModify?: (activityId: string, payload: any) => void | Promise<void>
 }
 
-export function UnifiedActivityCard({ activity, agentName, onApprove, onReject, onModify }: UnifiedActivityCardProps) {
-  // For activities that need HITL, use existing specialized components
-  if (activity.type === "research" && activity.status === "pending") {
-    return (
-      <ResearchActivityCard
-        activity={{
-          id: activity.id,
-          agentId: activity.agentId,
-          type: "research",
-          status: activity.status,
-          priority: activity.priority!,
-          createdAt: activity.createdAt,
-          data: activity.data,
-        }}
-        agentName={agentName}
-        onApprove={onApprove}
-        onReject={onReject}
-        onModify={onModify}
-      />
-    )
+// Activity type icons and colors
+const ACTIVITY_CONFIG = {
+  research: {
+    icon: FileText,
+    color: 'text-blue-600',
+    bgColor: 'bg-blue-100 dark:bg-blue-900/20',
+    label: 'Research',
+  },
+  email_sent: {
+    icon: Mail,
+    color: 'text-green-600',
+    bgColor: 'bg-green-100 dark:bg-green-900/20',
+    label: 'Email Sent',
+  },
+  phone_call: {
+    icon: Phone,
+    color: 'text-purple-600',
+    bgColor: 'bg-purple-100 dark:bg-purple-900/20',
+    label: 'Phone Call',
+  },
+  post_call_summary: {
+    icon: Phone,
+    color: 'text-indigo-600',
+    bgColor: 'bg-indigo-100 dark:bg-indigo-900/20',
+    label: 'Call Summary',
+  },
+  calendar_event_added: {
+    icon: Calendar,
+    color: 'text-orange-600',
+    bgColor: 'bg-orange-100 dark:bg-orange-900/20',
+    label: 'Calendar Event',
+  },
+  calendar_event_modified: {
+    icon: Calendar,
+    color: 'text-amber-600',
+    bgColor: 'bg-amber-100 dark:bg-amber-900/20',
+    label: 'Calendar Updated',
+  },
+  webpage_viewed: {
+    icon: Globe,
+    color: 'text-cyan-600',
+    bgColor: 'bg-cyan-100 dark:bg-cyan-900/20',
+    label: 'Webpage Viewed',
+  },
+  journal_read: {
+    icon: FileText,
+    color: 'text-pink-600',
+    bgColor: 'bg-pink-100 dark:bg-pink-900/20',
+    label: 'Journal Entry',
+  },
+}
+
+// Status icons and colors
+const STATUS_CONFIG = {
+  pending: {
+    icon: Clock,
+    color: 'text-yellow-600',
+    bg: 'bg-yellow-100 dark:bg-yellow-900/20',
+    label: 'Pending Approval',
+  },
+  approved: {
+    icon: CheckCircle2,
+    color: 'text-green-600',
+    bg: 'bg-green-100 dark:bg-green-900/20',
+    label: 'Approved',
+  },
+  completed: {
+    icon: CheckCircle2,
+    color: 'text-blue-600',
+    bg: 'bg-blue-100 dark:bg-blue-900/20',
+    label: 'Completed',
+  },
+  rejected: {
+    icon: XCircle,
+    color: 'text-red-600',
+    bg: 'bg-red-100 dark:bg-red-900/20',
+    label: 'Rejected',
+  },
+}
+
+export function UnifiedActivityCard({
+  activity,
+  agentName,
+  onApprove,
+  onReject,
+  onModify,
+}: UnifiedActivityCardProps) {
+  const typeConfig = ACTIVITY_CONFIG[activity.type] || {
+    icon: FileText,
+    color: 'text-gray-600',
+    bgColor: 'bg-gray-100 dark:bg-gray-900/20',
+    label: activity.type,
   }
 
-  if (activity.type === "email_sent" && activity.status === "pending") {
-    return (
-      <EmailActivityCard
-        activity={{
-          id: activity.id,
-          agentId: activity.agentId,
-          type: "email",
-          status: activity.status,
-          priority: activity.priority!,
-          createdAt: activity.createdAt,
-          data: activity.data,
-        }}
-        agentName={agentName}
-        onApprove={onApprove}
-        onReject={onReject}
-        onModify={onModify}
-      />
-    )
-  }
+  const statusConfig = STATUS_CONFIG[activity.status]
+  const TypeIcon = typeConfig.icon
+  const StatusIcon = statusConfig.icon
 
-  if (activity.type === "phone_call" && activity.status === "pending") {
-    return (
-      <PhoneActivityCard
-        activity={{
-          id: activity.id,
-          agentId: activity.agentId,
-          type: "phone",
-          status: activity.status,
-          priority: activity.priority!,
-          createdAt: activity.createdAt,
-          data: activity.data,
-        }}
-        agentName={agentName}
-        onApprove={onApprove}
-        onReject={onReject}
-        onModify={onModify}
-      />
-    )
-  }
+  const isPending = activity.status === 'pending'
 
-  if (
-    (activity.type === "calendar_event_added" || activity.type === "calendar_event_modified") &&
-    activity.status === "pending"
-  ) {
-    return (
-      <CalendarActivityCard
-        activity={{
-          id: activity.id,
-          agentId: activity.agentId,
-          type: "calendar",
-          status: activity.status,
-          priority: activity.priority!,
-          createdAt: activity.createdAt,
-          data: activity.data,
-        }}
-        agentName={agentName}
-        onApprove={onApprove}
-        onReject={onReject}
-        onModify={onModify}
-      />
-    )
-  }
+  // Render activity-specific content
+  const renderActivityContent = () => {
+    const payload = activity.payload || {}
 
-  if (activity.type === "financial" && activity.status === "pending") {
-    return (
-      <FinancialActivityCard
-        activity={{
-          id: activity.id,
-          agentId: activity.agentId,
-          type: "financial",
-          status: activity.status,
-          priority: activity.priority!,
-          createdAt: activity.createdAt,
-          data: activity.data,
-        }}
-        agentName={agentName}
-        onApprove={onApprove}
-        onReject={onReject}
-        onModify={onModify}
-      />
-    )
-  }
+    switch (activity.type) {
+      case 'research':
+        return (
+          <div className="space-y-2">
+            {payload.title && <p className="font-medium">{payload.title}</p>}
+            {payload.description && (
+              <p className="text-sm text-muted-foreground">{payload.description}</p>
+            )}
+            {payload.url && (
+              <a
+                href={payload.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:underline"
+              >
+                View Source →
+              </a>
+            )}
+          </div>
+        )
 
-  // For completed activities, show simple summary cards
-  return (
-    <Card className="border-border">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            {getActivityIcon(activity.type)}
-            <div>
-              <CardTitle className="text-base">{getActivityTitle(activity.type)}</CardTitle>
-              <div className="flex items-center gap-2 mt-1">
-                <p className="text-xs text-muted-foreground">{agentName}</p>
-                <span className="text-xs text-muted-foreground">•</span>
-                <p className="text-xs text-muted-foreground">
-                  {formatDistanceToNow(activity.createdAt, { addSuffix: true })}
-                </p>
+      case 'email_sent':
+        return (
+          <div className="space-y-2">
+            <p className="font-medium">To: {payload.to || 'Unknown'}</p>
+            {payload.subject && <p className="text-sm font-medium">{payload.subject}</p>}
+            {payload.preview && (
+              <p className="text-sm text-muted-foreground line-clamp-2">{payload.preview}</p>
+            )}
+          </div>
+        )
+
+      case 'phone_call':
+        return (
+          <div className="space-y-2">
+            <p className="font-medium">Call to: {payload.to_number || payload.toNumber || 'Unknown'}</p>
+            {payload.duration && (
+              <p className="text-sm text-muted-foreground">Duration: {payload.duration}s</p>
+            )}
+            {payload.context && (
+              <p className="text-sm text-muted-foreground">{payload.context}</p>
+            )}
+          </div>
+        )
+
+      case 'post_call_summary':
+        return (
+          <div className="space-y-2">
+            <p className="font-medium">Call Summary</p>
+            {payload.summary && (
+              <div className="p-3 bg-muted rounded-lg">
+                <p className="text-sm">{payload.summary}</p>
               </div>
+            )}
+            {payload.keyPoints && Array.isArray(payload.keyPoints) && payload.keyPoints.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs font-medium text-muted-foreground mb-1">Key Points:</p>
+                <ul className="list-disc list-inside text-sm space-y-1">
+                  {payload.keyPoints.map((point: string, idx: number) => (
+                    <li key={idx}>{point}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {payload.duration && (
+              <p className="text-xs text-muted-foreground">Duration: {payload.duration}s</p>
+            )}
+          </div>
+        )
+
+      case 'calendar_event_added':
+      case 'calendar_event_modified':
+        return (
+          <div className="space-y-2">
+            {payload.title && <p className="font-medium">{payload.title}</p>}
+            {payload.start && (
+              <p className="text-sm text-muted-foreground">
+                {new Date(payload.start).toLocaleString()}
+              </p>
+            )}
+            {payload.description && (
+              <p className="text-sm text-muted-foreground line-clamp-2">{payload.description}</p>
+            )}
+          </div>
+        )
+
+      case 'webpage_viewed':
+        return (
+          <div className="space-y-2">
+            {payload.title && <p className="font-medium">{payload.title}</p>}
+            {payload.url && (
+              <a
+                href={payload.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:underline truncate block"
+              >
+                {payload.url}
+              </a>
+            )}
+          </div>
+        )
+
+      case 'journal_read':
+        return (
+          <div className="space-y-2">
+            {payload.title && <p className="font-medium">{payload.title}</p>}
+            {payload.content && (
+              <p className="text-sm text-muted-foreground line-clamp-3">{payload.content}</p>
+            )}
+          </div>
+        )
+
+      default:
+        return (
+          <div>
+            <p className="text-sm text-muted-foreground">
+              {payload.description || payload.title || 'Activity completed'}
+            </p>
+          </div>
+        )
+    }
+  }
+
+  return (
+    <Card className="border-border hover:shadow-md transition-shadow">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 flex-1">
+            <div className={`p-2 rounded-lg ${typeConfig.bgColor}`}>
+              <TypeIcon className={`h-5 w-5 ${typeConfig.color}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <CardTitle className="text-base">{typeConfig.label}</CardTitle>
+                <Badge variant="outline" className={`${statusConfig.bg} ${statusConfig.color} border-0`}>
+                  <StatusIcon className="h-3 w-3 mr-1" />
+                  {statusConfig.label}
+                </Badge>
+                {activity.priority && activity.priority === 'high' && (
+                  <Badge variant="outline" className="bg-red-100 dark:bg-red-900/20 text-red-600 border-0">
+                    <AlertCircle className="h-3 w-3 mr-1" />
+                    High Priority
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {agentName} • {formatDistanceToNow(new Date(activity.created_at), { addSuffix: true })}
+              </p>
             </div>
           </div>
-          {activity.status === "completed" && (
-            <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              Completed
-            </Badge>
-          )}
         </div>
       </CardHeader>
-      <CardContent>{renderActivityContent(activity)}</CardContent>
+      <CardContent>
+        {renderActivityContent()}
+
+        {isPending && (onApprove || onReject) && (
+          <div className="flex gap-2 mt-4 pt-4 border-t border-border">
+            {onApprove && (
+              <Button size="sm" onClick={() => onApprove(activity.id)}>
+                Approve
+              </Button>
+            )}
+            {onReject && (
+              <Button size="sm" variant="outline" onClick={() => onReject(activity.id)}>
+                Reject
+              </Button>
+            )}
+          </div>
+        )}
+      </CardContent>
     </Card>
   )
-}
-
-function getActivityIcon(type: UnifiedActivity["type"]) {
-  const iconClass = "h-5 w-5"
-  switch (type) {
-    case "video_watched":
-      return <Video className={iconClass} />
-    case "image_seen":
-      return <ImageIcon className={iconClass} />
-    case "email_read":
-      return <Mail className={iconClass} />
-    case "research":
-      return <FileText className={iconClass} />
-    default:
-      return <Clock className={iconClass} />
-  }
-}
-
-function getActivityTitle(type: UnifiedActivity["type"]) {
-  switch (type) {
-    case "video_watched":
-      return "Video Watched"
-    case "image_seen":
-      return "Image Analyzed"
-    case "email_read":
-      return "Email Read"
-    case "research":
-      return "Research Completed"
-    default:
-      return "Activity"
-  }
-}
-
-function renderActivityContent(activity: UnifiedActivity) {
-  const data = activity.data
-
-  switch (activity.type) {
-    case "video_watched":
-      return (
-        <div className="space-y-3">
-          <div>
-            <a
-              href={data.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium hover:underline flex items-center gap-1"
-            >
-              {data.title}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-            <p className="text-xs text-muted-foreground mt-1">Duration: {Math.floor(data.duration / 60)} minutes</p>
-          </div>
-          <p className="text-sm text-muted-foreground">{data.summary}</p>
-          {data.keyPoints && data.keyPoints.length > 0 && (
-            <div>
-              <p className="text-xs font-medium mb-2">Key Points:</p>
-              <ul className="space-y-1">
-                {data.keyPoints.map((point: string, idx: number) => (
-                  <li key={idx} className="text-xs text-muted-foreground flex items-start gap-2">
-                    <ArrowRight className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>{point}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )
-
-    case "image_seen":
-      return (
-        <div className="space-y-3">
-          <div>
-            <p className="text-sm font-medium">{data.description}</p>
-            <p className="text-xs text-muted-foreground mt-1">Context: {data.context}</p>
-          </div>
-          {data.insights && data.insights.length > 0 && (
-            <div>
-              <p className="text-xs font-medium mb-2">Insights:</p>
-              <ul className="space-y-1">
-                {data.insights.map((insight: string, idx: number) => (
-                  <li key={idx} className="text-xs text-muted-foreground flex items-start gap-2">
-                    <ArrowRight className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>{insight}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )
-
-    case "email_read":
-      return (
-        <div className="space-y-3">
-          <div>
-            <p className="text-sm font-medium">{data.subject}</p>
-            <p className="text-xs text-muted-foreground mt-1">From: {data.from}</p>
-          </div>
-          <p className="text-sm text-muted-foreground">{data.summary}</p>
-          {data.keyPoints && data.keyPoints.length > 0 && (
-            <div>
-              <p className="text-xs font-medium mb-2">Key Points:</p>
-              <ul className="space-y-1">
-                {data.keyPoints.map((point: string, idx: number) => (
-                  <li key={idx} className="text-xs text-muted-foreground flex items-start gap-2">
-                    <ArrowRight className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>{point}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {data.nextSteps && (
-            <div className="bg-blue-500/10 rounded-lg p-3 border border-blue-500/20">
-              <p className="text-xs font-medium mb-1">Next Steps:</p>
-              <p className="text-xs text-muted-foreground">{data.nextSteps}</p>
-            </div>
-          )}
-        </div>
-      )
-
-    case "research":
-      return (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">{data.subgraph.title}</p>
-          <p className="text-sm text-muted-foreground">{data.subgraph.description}</p>
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span>{data.subgraph.nodesAdded} nodes added</span>
-            <span>•</span>
-            <span>{data.subgraph.relationshipsAdded} relationships</span>
-          </div>
-        </div>
-      )
-
-    default:
-      return <p className="text-sm text-muted-foreground">Activity completed</p>
-  }
 }

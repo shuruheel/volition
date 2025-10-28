@@ -1,116 +1,198 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import type { Agent } from "@/lib/auth"
+import type { Agent } from "@/lib/db"
 import { CreateAgentDialog } from "@/components/create-agent-dialog"
 import { UnifiedActivityCard } from "@/components/unified-activity-card"
 import { ChatDrawer } from "@/components/chat-drawer"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, CheckCircle2, DollarSign } from "lucide-react"
-import { MOCK_AGENTS, getUnifiedActivities, getAgentMetrics, type UnifiedActivity } from "@/lib/mock-data"
+import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone } from "lucide-react"
+import type { Activity } from "@/lib/db"
+
+// Activity types to display in feed (excluding high-frequency noise)
+const INCLUDED_ACTIVITY_TYPES = [
+  'research',
+  'email_sent',
+  'phone_call',
+  'post_call_summary',
+  'calendar_event_added',
+  'calendar_event_modified',
+  'webpage_viewed',
+  'journal_read',
+]
+
+interface KeyMetrics {
+  totalSpend: number
+  activeTasks: number
+  pendingApprovals: number
+  memoriesAdded: number
+  actionsDone: number
+  emailsSent: number
+  callsMade: number
+}
 
 export default function DashboardPage() {
-  const [agents, setAgents] = useState<Agent[]>(MOCK_AGENTS)
+  const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
-  const [activities, setActivities] = useState<UnifiedActivity[]>([])
+  const [activities, setActivities] = useState<Activity[]>([])
+  const [metrics, setMetrics] = useState<KeyMetrics>({
+    totalSpend: 0,
+    activeTasks: 0,
+    pendingApprovals: 0,
+    memoriesAdded: 0,
+    actionsDone: 0,
+    emailsSent: 0,
+    callsMade: 0,
+  })
+  const [loading, setLoading] = useState(true)
 
+  // Fetch agents
   useEffect(() => {
-    const unifiedActivities = getUnifiedActivities(selectedAgentId || undefined)
-    setActivities(unifiedActivities.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()))
-  }, [selectedAgentId, agents])
+    fetch('/api/agents')
+      .then((res) => res.json())
+      .then((data) => setAgents(data))
+      .catch((error) => console.error('Failed to fetch agents:', error))
+  }, [])
 
-  const calculateKeyMetrics = () => {
-    const relevantAgents = selectedAgentId ? agents.filter((a) => a.id === selectedAgentId) : agents
+  // Fetch activities with filtering
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (selectedAgentId) {
+      params.set('agentId', selectedAgentId)
+    }
+    params.set('types', INCLUDED_ACTIVITY_TYPES.join(','))
+    params.set('limit', '50')
 
-    let totalSpend = 0
-    let activeTasks = 0
-    let pendingApprovals = 0
-    let nodesAdded24h = 0
-    let actionsCompleted24h = 0
-    let totalErrors = 0
+    fetch(`/api/activities?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => setActivities(data))
+      .catch((error) => console.error('Failed to fetch activities:', error))
+  }, [selectedAgentId])
 
-    relevantAgents.forEach((agent) => {
-      const metrics = getAgentMetrics(agent.id)
-      totalSpend += metrics.apiCost
-      if (agent.status === "active") activeTasks++
-      totalErrors += metrics.errorsEncountered
+  // Fetch metrics
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (selectedAgentId) {
+      params.set('agentId', selectedAgentId)
+    }
 
-      const agentActivities = selectedAgentId ? activities : activities.filter((a) => a.agentId === agent.id)
-
-      const last24h = Date.now() - 24 * 60 * 60 * 1000
-      agentActivities.forEach((activity) => {
-        if (activity.status === "pending") pendingApprovals++
-        if (activity.createdAt.getTime() > last24h) {
-          if (activity.status === "completed") actionsCompleted24h++
-          if (activity.type === "research" && activity.data.subgraph) {
-            nodesAdded24h += activity.data.subgraph.nodesAdded || 0
-          }
-        }
+    setLoading(true)
+    fetch(`/api/metrics/key?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setMetrics(data)
+        setLoading(false)
       })
-    })
+      .catch((error) => {
+        console.error('Failed to fetch metrics:', error)
+        setLoading(false)
+      })
+  }, [selectedAgentId])
 
-    const successRate =
-      actionsCompleted24h + pendingApprovals > 0
-        ? Math.round((actionsCompleted24h / (actionsCompleted24h + pendingApprovals + totalErrors)) * 100)
-        : 100
-
-    return {
-      totalSpend,
-      activeTasks,
-      pendingApprovals,
-      nodesAdded24h,
-      actionsCompleted24h,
-      successRate,
-      totalErrors,
+  const handleCreateAgent = async (name: string, prompt: string, tools: string[]) => {
+    try {
+      const response = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, prompt, tools }),
+      })
+      
+      if (!response.ok) throw new Error('Failed to create agent')
+      
+      const newAgent = await response.json()
+      setAgents([...agents, newAgent])
+    } catch (error) {
+      console.error('Failed to create agent:', error)
     }
   }
 
-  const keyMetrics = calculateKeyMetrics()
-
-  const handleCreateAgent = (name: string, prompt: string) => {
-    const newAgent: Agent = {
-      id: String(agents.length + 1),
-      name,
-      prompt,
-      status: "idle",
-      createdAt: new Date(),
-      lastActive: new Date(),
-    }
-    setAgents([...agents, newAgent])
-  }
-
-  const handleToggleStatus = (agentId: string) => {
-    setAgents(
-      agents.map((agent) =>
-        agent.id === agentId
-          ? { ...agent, status: agent.status === "active" ? "paused" : "active", lastActive: new Date() }
-          : agent,
-      ),
-    )
-  }
-
-  const handleDeleteAgent = (agentId: string) => {
-    setAgents(agents.filter((agent) => agent.id !== agentId))
-    if (selectedAgentId === agentId) {
-      setSelectedAgentId(null)
+  const handleToggleStatus = async (agentId: string) => {
+    const agent = agents.find((a) => a.id === agentId)
+    if (!agent) return
+    
+    const newStatus = agent.status === 'active' ? 'idle' : 'active'
+    
+    try {
+      const response = await fetch(`/api/agents/${agentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      
+      if (!response.ok) throw new Error('Failed to update agent')
+      
+      const updatedAgent = await response.json()
+      setAgents(agents.map((a) => (a.id === agentId ? updatedAgent : a)))
+    } catch (error) {
+      console.error('Failed to toggle agent status:', error)
     }
   }
 
-  const handleApproveActivity = (activityId: string) => {
-    setActivities(activities.map((a) => (a.id === activityId ? { ...a, status: "approved" as const } : a)))
+  const handleDeleteAgent = async (agentId: string) => {
+    if (!confirm('Are you sure you want to delete this agent?')) return
+    
+    try {
+      const response = await fetch(`/api/agents/${agentId}`, {
+        method: 'DELETE',
+      })
+      
+      if (!response.ok) throw new Error('Failed to delete agent')
+      
+      setAgents(agents.filter((agent) => agent.id !== agentId))
+      if (selectedAgentId === agentId) {
+        setSelectedAgentId(null)
+      }
+    } catch (error) {
+      console.error('Failed to delete agent:', error)
+    }
   }
 
-  const handleRejectActivity = (activityId: string) => {
-    setActivities(activities.map((a) => (a.id === activityId ? { ...a, status: "rejected" as const } : a)))
+  const handleApproveActivity = async (activityId: string) => {
+    try {
+      const response = await fetch(`/api/activities/${activityId}/approve`, {
+        method: 'POST',
+      })
+      
+      if (!response.ok) throw new Error('Failed to approve activity')
+      
+      const updatedActivity = await response.json()
+      setActivities(activities.map((a) => (a.id === activityId ? updatedActivity : a)))
+    } catch (error) {
+      console.error('Failed to approve activity:', error)
+    }
   }
 
-  const handleModifyActivity = (activityId: string, data: any) => {
-    setActivities(activities.map((a) => (a.id === activityId ? { ...a, data } : a)))
+  const handleRejectActivity = async (activityId: string) => {
+    try {
+      const response = await fetch(`/api/activities/${activityId}/reject`, {
+        method: 'POST',
+      })
+      
+      if (!response.ok) throw new Error('Failed to reject activity')
+      
+      const updatedActivity = await response.json()
+      setActivities(activities.map((a) => (a.id === activityId ? updatedActivity : a)))
+    } catch (error) {
+      console.error('Failed to reject activity:', error)
+    }
   }
 
-  const handleLogout = () => {
-    window.location.reload()
+  const handleModifyActivity = async (activityId: string, payload: any) => {
+    try {
+      const response = await fetch(`/api/activities/${activityId}/modify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload }),
+      })
+      
+      if (!response.ok) throw new Error('Failed to modify activity')
+      
+      const updatedActivity = await response.json()
+      setActivities(activities.map((a) => (a.id === activityId ? updatedActivity : a)))
+    } catch (error) {
+      console.error('Failed to modify activity:', error)
+    }
   }
 
   const statusColors = {
@@ -209,7 +291,7 @@ export default function DashboardPage() {
                   <DollarSign className="h-4 w-4 text-green-600" />
                   <p className="text-xs font-medium text-muted-foreground">Total Spend</p>
                 </div>
-                <p className="text-2xl font-bold">${keyMetrics.totalSpend.toFixed(2)}</p>
+                <p className="text-2xl font-bold">{loading ? '...' : `$${metrics.totalSpend.toFixed(2)}`}</p>
               </CardContent>
             </Card>
 
@@ -219,7 +301,7 @@ export default function DashboardPage() {
                   <TrendingUp className="h-4 w-4 text-blue-600" />
                   <p className="text-xs font-medium text-muted-foreground">Active Tasks</p>
                 </div>
-                <p className="text-2xl font-bold">{keyMetrics.activeTasks}</p>
+                <p className="text-2xl font-bold">{loading ? '...' : metrics.activeTasks}</p>
               </CardContent>
             </Card>
 
@@ -229,41 +311,47 @@ export default function DashboardPage() {
                   <AlertCircle className="h-4 w-4 text-orange-600" />
                   <p className="text-xs font-medium text-muted-foreground">Pending Approvals</p>
                 </div>
-                <p className="text-2xl font-bold">{keyMetrics.pendingApprovals}</p>
+                <p className="text-2xl font-bold">{loading ? '...' : metrics.pendingApprovals}</p>
               </CardContent>
             </Card>
 
             <Card className="border-border">
               <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground mb-1">Nodes Added</p>
-                <p className="text-2xl font-bold">{keyMetrics.nodesAdded24h}</p>
+                <div className="flex items-center gap-2 mb-1">
+                  <Brain className="h-4 w-4 text-purple-600" />
+                  <p className="text-xs font-medium text-muted-foreground">Memories Added</p>
+                </div>
+                <p className="text-2xl font-bold">{loading ? '...' : metrics.memoriesAdded}</p>
               </CardContent>
             </Card>
 
             <Card className="border-border">
               <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground mb-1">Actions Done</p>
-                <p className="text-2xl font-bold">{keyMetrics.actionsCompleted24h}</p>
+                <div className="flex items-center gap-2 mb-1">
+                  <Zap className="h-4 w-4 text-yellow-600" />
+                  <p className="text-xs font-medium text-muted-foreground">Actions Done</p>
+                </div>
+                <p className="text-2xl font-bold">{loading ? '...' : metrics.actionsDone}</p>
               </CardContent>
             </Card>
 
-            <Card className="border-border bg-gradient-to-br from-green-500/10 to-teal-500/5">
+            <Card className="border-border bg-gradient-to-br from-blue-500/10 to-cyan-500/5">
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-1">
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <p className="text-xs font-medium text-muted-foreground">Success Rate</p>
+                  <Mail className="h-4 w-4 text-blue-600" />
+                  <p className="text-xs font-medium text-muted-foreground">Emails Sent</p>
                 </div>
-                <p className="text-2xl font-bold">{keyMetrics.successRate}%</p>
+                <p className="text-2xl font-bold">{loading ? '...' : metrics.emailsSent}</p>
               </CardContent>
             </Card>
 
-            <Card className="border-border bg-gradient-to-br from-red-500/10 to-rose-500/5">
+            <Card className="border-border bg-gradient-to-br from-purple-500/10 to-pink-500/5">
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-1">
-                  <AlertCircle className="h-4 w-4 text-red-600" />
-                  <p className="text-xs font-medium text-muted-foreground">Errors</p>
+                  <Phone className="h-4 w-4 text-purple-600" />
+                  <p className="text-xs font-medium text-muted-foreground">Calls Made</p>
                 </div>
-                <p className="text-2xl font-bold text-red-500">{keyMetrics.totalErrors}</p>
+                <p className="text-2xl font-bold">{loading ? '...' : metrics.callsMade}</p>
               </CardContent>
             </Card>
           </div>
@@ -274,7 +362,7 @@ export default function DashboardPage() {
           {activities.length > 0 ? (
             <div className="space-y-4">
               {activities.map((activity) => {
-                const agent = agents.find((a) => a.id === activity.agentId)
+                const agent = agents.find((a) => a.id === activity.agent_id)
                 return (
                   <UnifiedActivityCard
                     key={activity.id}
@@ -290,7 +378,9 @@ export default function DashboardPage() {
           ) : (
             <Card className="border-border">
               <CardContent className="py-12 text-center">
-                <p className="text-muted-foreground">No recent activity</p>
+                <p className="text-muted-foreground">
+                  {loading ? 'Loading activities...' : 'No recent activity'}
+                </p>
               </CardContent>
             </Card>
           )}

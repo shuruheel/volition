@@ -1,0 +1,489 @@
+---
+description: Next.js 16 Route Handlers patterns and conventions
+globs: app/api/**/*.ts
+---
+# Next.js 16 Route Handlers
+
+## Overview
+
+Route Handlers are server-side API endpoints using the Web Request and Response APIs.
+
+Documentation: [docs/nextjs-16/route-handlers.md](mdc:docs/nextjs-16/route-handlers.md)
+
+## File Convention
+
+Route Handlers are defined in `route.ts` files:
+
+```
+app/
+├── api/
+│   ├── agents/
+│   │   ├── route.ts          # GET /api/agents, POST /api/agents
+│   │   └── [id]/
+│   │       └── route.ts      # GET /api/agents/:id, PATCH /api/agents/:id
+│   ├── activities/
+│   │   ├── route.ts          # GET /api/activities
+│   │   └── [id]/
+│   │       ├── approve/
+│   │       │   └── route.ts  # POST /api/activities/:id/approve
+│   │       └── reject/
+│   │           └── route.ts  # POST /api/activities/:id/reject
+```
+
+## Supported HTTP Methods
+
+```typescript
+// app/api/agents/route.ts
+export async function GET(request: Request) {
+  // List agents
+}
+
+export async function POST(request: Request) {
+  // Create agent
+}
+```
+
+Supported: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`
+
+## Request Handling
+
+### Reading Request Body
+
+```typescript
+export async function POST(request: Request) {
+  const body = await request.json();
+  
+  // Validate with Zod
+  const schema = z.object({
+    name: z.string(),
+    prompt: z.string(),
+    tools: z.array(z.string()),
+  });
+  
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    return Response.json(
+      { error: 'Invalid input', details: result.error.errors },
+      { status: 400 }
+    );
+  }
+  
+  // Use validated data
+  const { name, prompt, tools } = result.data;
+  // ...
+}
+```
+
+### Reading Query Parameters
+
+```typescript
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  
+  const agentId = searchParams.get('agentId');
+  const types = searchParams.getAll('types'); // Multiple values
+  const limit = parseInt(searchParams.get('limit') ?? '10');
+  
+  // Use parameters
+  const activities = await sql`
+    SELECT * FROM activities
+    WHERE agent_id = ${agentId}
+    AND type = ANY(${types})
+    LIMIT ${limit}
+  `;
+  
+  return Response.json({ activities });
+}
+```
+
+### Accessing Route Parameters
+
+```typescript
+// app/api/agents/[id]/route.ts
+import type { RouteContext } from 'next/server';
+
+export async function GET(
+  request: Request,
+  context: RouteContext<'/api/agents/[id]'>
+) {
+  const { id } = await context.params;
+  
+  const [agent] = await sql`SELECT * FROM agents WHERE id = ${id}`;
+  
+  if (!agent) {
+    return Response.json({ error: 'Agent not found' }, { status: 404 });
+  }
+  
+  return Response.json({ agent });
+}
+
+export async function PATCH(
+  request: Request,
+  context: RouteContext<'/api/agents/[id]'>
+) {
+  const { id } = await context.params;
+  const body = await request.json();
+  
+  // Update agent
+  const [updated] = await sql`
+    UPDATE agents
+    SET 
+      status = COALESCE(${body.status}, status),
+      prompt = COALESCE(${body.prompt}, prompt),
+      tools = COALESCE(${body.tools}, tools),
+      updated_at = NOW()
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  
+  return Response.json({ agent: updated });
+}
+```
+
+## Response Patterns
+
+### JSON Response
+
+```typescript
+export async function GET() {
+  const agents = await sql`SELECT * FROM agents`;
+  
+  return Response.json({ 
+    agents,
+    count: agents.length 
+  });
+}
+```
+
+### Error Response
+
+```typescript
+export async function POST(request: Request) {
+  try {
+    // ... logic
+  } catch (error) {
+    console.error('API error:', error);
+    
+    return Response.json(
+      { error: 'Internal server error', message: error.message },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Custom Headers
+
+```typescript
+export async function GET() {
+  const data = await fetchData();
+  
+  return Response.json(data, {
+    headers: {
+      'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
+      'X-Custom-Header': 'value',
+    },
+  });
+}
+```
+
+### Streaming Response
+
+```typescript
+export async function GET() {
+  const encoder = new TextEncoder();
+  
+  const stream = new ReadableStream({
+    async start(controller) {
+      for await (const chunk of dataGenerator()) {
+        controller.enqueue(encoder.encode(JSON.stringify(chunk) + '\n'));
+      }
+      controller.close();
+    },
+  });
+  
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+}
+```
+
+## Agent CRUD APIs
+
+### List Agents
+
+```typescript
+// app/api/agents/route.ts
+import { sql } from '@/lib/db';
+
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get('status');
+    
+    const agents = status
+      ? await sql`SELECT * FROM agents WHERE status = ${status} ORDER BY created_at DESC`
+      : await sql`SELECT * FROM agents ORDER BY created_at DESC`;
+    
+    return Response.json({ agents });
+  } catch (error) {
+    console.error('GET /api/agents error:', error);
+    return Response.json({ error: 'Failed to fetch agents' }, { status: 500 });
+  }
+}
+```
+
+### Create Agent
+
+```typescript
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    
+    const schema = z.object({
+      name: z.string().min(1).max(255),
+      prompt: z.string(),
+      tools: z.array(z.enum(['openai', 'supermemory', 'browser_use', 'twilio'])),
+    });
+    
+    const result = schema.safeParse(body);
+    if (!result.success) {
+      return Response.json({ error: result.error.errors }, { status: 400 });
+    }
+    
+    const { name, prompt, tools } = result.data;
+    
+    const [agent] = await sql`
+      INSERT INTO agents (name, prompt, tools, status)
+      VALUES (${name}, ${prompt}, ${tools}, 'idle')
+      RETURNING *
+    `;
+    
+    return Response.json({ agent }, { status: 201 });
+  } catch (error) {
+    console.error('POST /api/agents error:', error);
+    return Response.json({ error: 'Failed to create agent' }, { status: 500 });
+  }
+}
+```
+
+## Activity APIs
+
+### List Activities
+
+```typescript
+// app/api/activities/route.ts
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  
+  const agentId = searchParams.get('agentId');
+  const types = searchParams.get('types')?.split(',') ?? [];
+  const limit = parseInt(searchParams.get('limit') ?? '50');
+  
+  let query = sql`
+    SELECT * FROM activities
+    WHERE 1=1
+  `;
+  
+  if (agentId) {
+    query = sql`${query} AND agent_id = ${agentId}`;
+  }
+  
+  if (types.length > 0) {
+    query = sql`${query} AND type = ANY(${types})`;
+  }
+  
+  query = sql`${query} ORDER BY created_at DESC LIMIT ${limit}`;
+  
+  const activities = await query;
+  
+  return Response.json({ activities });
+}
+```
+
+### Approve Activity
+
+```typescript
+// app/api/activities/[id]/approve/route.ts
+export async function POST(
+  request: Request,
+  context: RouteContext<'/api/activities/[id]/approve'>
+) {
+  const { id } = await context.params;
+  
+  const [activity] = await sql`
+    UPDATE activities
+    SET status = 'approved'
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  
+  if (!activity) {
+    return Response.json({ error: 'Activity not found' }, { status: 404 });
+  }
+  
+  // Trigger action based on activity type
+  if (activity.type === 'phone_call') {
+    // Initiate Twilio call
+    // ...
+  }
+  
+  return Response.json({ activity });
+}
+```
+
+## Metrics API
+
+```typescript
+// app/api/metrics/key/route.ts
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const agentId = searchParams.get('agentId');
+  
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000); // Last 24h
+  
+  // Total spend (mock for now)
+  const totalSpend = 15.42;
+  
+  // Active tasks
+  const [{ count: activeTasks }] = await sql`
+    SELECT COUNT(*) as count FROM agents WHERE status = 'active'
+  `;
+  
+  // Pending approvals
+  const [{ count: pendingApprovals }] = await sql`
+    SELECT COUNT(*) as count FROM activities 
+    WHERE status = 'pending' AND created_at > ${since}
+  `;
+  
+  // Memories added
+  const [{ count: memoriesAdded }] = await sql`
+    SELECT COUNT(*) as count FROM memories 
+    WHERE created_at > ${since}
+  `;
+  
+  // Actions done
+  const [{ count: actionsDone }] = await sql`
+    SELECT COUNT(*) as count FROM activities 
+    WHERE status = 'completed' AND created_at > ${since}
+  `;
+  
+  // Emails sent (future)
+  const emailsSent = 0;
+  
+  // Calls made
+  const [{ count: callsMade }] = await sql`
+    SELECT COUNT(*) as count FROM calls 
+    WHERE started_at > ${since}
+  `;
+  
+  return Response.json({
+    totalSpend,
+    activeTasks: parseInt(activeTasks),
+    pendingApprovals: parseInt(pendingApprovals),
+    memoriesAdded: parseInt(memoriesAdded),
+    actionsDone: parseInt(actionsDone),
+    emailsSent,
+    callsMade: parseInt(callsMade),
+  });
+}
+```
+
+## Error Handling Pattern
+
+```typescript
+// Common error handler
+function handleAPIError(error: unknown, operation: string) {
+  console.error(`${operation} error:`, error);
+  
+  if (error instanceof z.ZodError) {
+    return Response.json(
+      { error: 'Validation error', details: error.errors },
+      { status: 400 }
+    );
+  }
+  
+  if (error.message?.includes('unique constraint')) {
+    return Response.json(
+      { error: 'Resource already exists' },
+      { status: 409 }
+    );
+  }
+  
+  return Response.json(
+    { error: 'Internal server error' },
+    { status: 500 }
+  );
+}
+
+// Usage
+export async function POST(request: Request) {
+  try {
+    // ... logic
+  } catch (error) {
+    return handleAPIError(error, 'POST /api/agents');
+  }
+}
+```
+
+## Middleware Pattern
+
+```typescript
+// lib/api-middleware.ts
+export function withAuth(handler: Function) {
+  return async (request: Request, context: any) => {
+    // Mock auth for v1
+    const userId = 'mock-user-id';
+    
+    // In v2: real auth check
+    // const session = await getSession(request);
+    // if (!session) {
+    //   return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    // }
+    
+    // Add userId to context
+    return handler(request, { ...context, userId });
+  };
+}
+
+// Usage
+export const GET = withAuth(async (request: Request, context: any) => {
+  const { userId } = context;
+  // ... use userId
+});
+```
+
+## Best Practices
+
+1. **Always validate inputs** - Use Zod schemas
+2. **Handle errors gracefully** - Return proper error responses
+3. **Use typed route contexts** - Type-safe route parameters
+4. **Add request logging** - Log all API requests in development
+5. **Set proper status codes** - 200, 201, 400, 404, 500, etc.
+6. **Use transactions** - For multi-step database operations
+7. **Rate limiting** - Add rate limiting for production (v2)
+8. **CORS headers** - Add CORS headers if needed
+
+## Caching
+
+Route Handlers are **not cached by default**. To enable caching:
+
+```typescript
+export const dynamic = 'force-static'; // Cache at build time
+
+export async function GET() {
+  // This will be cached
+}
+```
+
+For most routes in this app, we want dynamic behavior, so don't set this.
+
+## Resources
+
+- [Next.js Route Handlers Docs](https://nextjs.org/docs/app/getting-started/route-handlers)
+- [Web Request API](https://developer.mozilla.org/en-US/docs/Web/API/Request)
+- [Web Response API](https://developer.mozilla.org/en-US/docs/Web/API/Response)
