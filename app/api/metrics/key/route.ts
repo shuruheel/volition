@@ -8,6 +8,20 @@ import { sql } from '@/lib/db';
  */
 export async function GET(request: NextRequest) {
   try {
+    // Check if database is configured
+    if (!process.env.DATABASE_URL) {
+      console.warn('DATABASE_URL not configured, returning zero metrics');
+      return NextResponse.json({
+        totalSpend: 0,
+        activeTasks: 0,
+        pendingApprovals: 0,
+        memoriesAdded: 0,
+        actionsDone: 0,
+        emailsSent: 0,
+        callsMade: 0,
+      });
+    }
+
     const { searchParams } = new URL(request.url);
     const agentId = searchParams.get('agentId');
     
@@ -88,10 +102,16 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('Failed to fetch key metrics:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch key metrics' },
-      { status: 500 }
-    );
+    // Return zero metrics instead of error to prevent UI crash
+    return NextResponse.json({
+      totalSpend: 0,
+      activeTasks: 0,
+      pendingApprovals: 0,
+      memoriesAdded: 0,
+      actionsDone: 0,
+      emailsSent: 0,
+      callsMade: 0,
+    });
   }
 }
 

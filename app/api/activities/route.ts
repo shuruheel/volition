@@ -8,6 +8,12 @@ import type { Activity } from '@/lib/db';
  */
 export async function GET(request: NextRequest) {
   try {
+    // Check if database is configured
+    if (!process.env.DATABASE_URL) {
+      console.warn('DATABASE_URL not configured, returning empty array');
+      return NextResponse.json([]);
+    }
+
     const { searchParams } = new URL(request.url);
     const agentId = searchParams.get('agentId');
     const types = searchParams.get('types')?.split(',');
@@ -40,10 +46,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(activities);
   } catch (error) {
     console.error('Failed to fetch activities:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch activities' },
-      { status: 500 }
-    );
+    // Return empty array instead of error to prevent UI crash
+    return NextResponse.json([]);
   }
 }
 

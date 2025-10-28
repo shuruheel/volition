@@ -8,6 +8,12 @@ import type { Agent } from '@/lib/db';
  */
 export async function GET() {
   try {
+    // Check if database is configured
+    if (!process.env.DATABASE_URL) {
+      console.warn('DATABASE_URL not configured, returning empty array');
+      return NextResponse.json([]);
+    }
+
     const agents = await sql<Agent[]>`
       SELECT * FROM agents
       ORDER BY created_at DESC
@@ -16,10 +22,8 @@ export async function GET() {
     return NextResponse.json(agents);
   } catch (error) {
     console.error('Failed to fetch agents:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch agents' },
-      { status: 500 }
-    );
+    // Return empty array instead of error to prevent UI crash
+    return NextResponse.json([]);
   }
 }
 
