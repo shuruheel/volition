@@ -1,30 +1,16 @@
-# Agent dashboard with Neo4j
+## Next.js 16 Upgrade Notes
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+- Upgraded to Next.js 16.0.0 and React 19.2.0.
+- Removed `eslint` config from `next.config.mjs` (no longer supported).
+- Updated `vaul` to `^1.1.2` for React 19 compatibility.
+- TypeScript set to `react-jsx` runtime; `.next/dev/types` added to `tsconfig.json` include.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/shuruheels-projects/v0-agent-dashboard-with-neo4j)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/QBhN3L8NN0G)
+### Commands
+- Dev: `pnpm dev`
+- Build: `pnpm build`
+- Lint: `pnpm lint`
 
-## Overview
+### Verification
+- `pnpm build` succeeds.
+- Start dev server and test routes at `http://localhost:3000`.
 
-This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
-
-## Deployment
-
-Your project is live at:
-
-**[https://vercel.com/shuruheels-projects/v0-agent-dashboard-with-neo4j](https://vercel.com/shuruheels-projects/v0-agent-dashboard-with-neo4j)**
-
-## Build your app
-
-Continue building your app on:
-
-**[https://v0.app/chat/projects/QBhN3L8NN0G](https://v0.app/chat/projects/QBhN3L8NN0G)**
-
-## How It Works
-
-1. Create and modify your project using [v0.app](https://v0.app)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
