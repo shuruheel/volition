@@ -61,6 +61,9 @@ SUPERMEMORY_API_KEY=sm_...
 # Browser Automation (Browser-Use - optional)
 BROWSER_USE_API_KEY=bu_...
 
+# Research (Firecrawl - recommended)
+FIRECRAWL_API_KEY=fc_...
+
 # Voice (Twilio - optional)
 TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...
@@ -91,6 +94,15 @@ pnpm dev
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to see your dashboard.
+
+### 6. Test Agent Execution
+
+1. Create a new agent via the UI
+2. Click the **Play button** (▶️) to start the agent
+3. Watch server logs for execution progress
+4. Check the Activity Feed for completed tasks
+
+See **[AGENT_EXECUTION.md](AGENT_EXECUTION.md)** for detailed testing guide.
 
 ## Project Structure
 
@@ -145,6 +157,8 @@ See `db/migrations/001_init.sql` for full schema.
 ### Agents
 - `GET /api/agents` - List all agents
 - `POST /api/agents` - Create agent
+- `POST /api/agents/:id/start` - Start agent execution
+- `POST /api/agents/:id/stop` - Stop agent execution
 - `PATCH /api/agents/:id` - Update agent
 - `DELETE /api/agents/:id` - Delete agent
 
@@ -178,29 +192,48 @@ See `db/migrations/001_init.sql` for full schema.
 
 ## Agent Orchestration
 
-Agents use Vercel AI SDK 6 with `ToolLoopAgent`:
+Agents use Vercel AI SDK 6 for autonomous task execution:
 
 ```typescript
-import { generateText } from 'ai';
+import { streamText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { supermemoryTools } from '@supermemory/tools/ai-sdk';
 import { browserTaskTool } from '@/lib/ai/tools/browser-task';
 
-const result = await generateText({
+const result = await streamText({
   model: openai('gpt-4o'),
   tools: {
     ...supermemoryTools(process.env.SUPERMEMORY_API_KEY),
     browserTask: browserTaskTool,
+    logActivity: logActivityTool,
   },
-  prompt: 'Research the latest AI news and store key findings',
+  prompt: agent.prompt + '\n\nUser request: ' + task,
   maxSteps: 10,
   onStepFinish: async ({ toolCalls, usage }) => {
-    // Log steps and usage
+    // Log steps and track usage
   },
 });
 ```
 
-See `lib/ai/agent.ts` and `.cursor/rules/03-ai-agents.mdc` for details.
+### How It Works
+
+1. **Create Agent**: Define system prompt and select tools
+2. **Start Agent**: Click Play button in UI → calls `POST /api/agents/:id/start`
+3. **Background Execution**: Agent runs autonomously with AI SDK streaming
+4. **Tool Execution**: Agent can call Supermemory, Browser-Use, and log activities
+5. **Completion**: Status updates to `idle`, activities logged
+
+**Current Limitations**:
+- Agents execute once per start (not continuously)
+- 60-second Vercel timeout applies (use job queue for longer tasks)
+- No real-time UI updates during execution
+
+**Production Ready**:
+- Use job queue (BullMQ/Inngest) for reliable execution
+- Add WebSocket for real-time updates
+- Implement scheduled/recurring tasks
+
+See **[AGENT_EXECUTION.md](AGENT_EXECUTION.md)** for detailed guide and `lib/ai/agent.ts` for implementation.
 
 ## Deployment
 

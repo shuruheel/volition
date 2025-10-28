@@ -20,28 +20,70 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
     const limit = parseInt(searchParams.get('limit') || '50');
     
-    let query = 'SELECT * FROM activities WHERE 1=1';
-    const params: any[] = [];
+    // Build dynamic query using tagged template
+    let activities: Activity[];
     
-    if (agentId) {
-      params.push(agentId);
-      query += ` AND agent_id = $${params.length}`;
+    if (agentId && types && types.length > 0 && status) {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        WHERE agent_id = ${agentId} 
+        AND type = ANY(${types})
+        AND status = ${status}
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
+    } else if (agentId && types && types.length > 0) {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        WHERE agent_id = ${agentId} 
+        AND type = ANY(${types})
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
+    } else if (types && types.length > 0 && status) {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        WHERE type = ANY(${types})
+        AND status = ${status}
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
+    } else if (types && types.length > 0) {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        WHERE type = ANY(${types})
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
+    } else if (agentId && status) {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        WHERE agent_id = ${agentId} 
+        AND status = ${status}
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
+    } else if (agentId) {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        WHERE agent_id = ${agentId}
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
+    } else if (status) {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        WHERE status = ${status}
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
+    } else {
+      activities = await sql<Activity[]>`
+        SELECT * FROM activities 
+        ORDER BY created_at DESC 
+        LIMIT ${limit}
+      `;
     }
-    
-    if (types && types.length > 0) {
-      params.push(types);
-      query += ` AND type = ANY($${params.length})`;
-    }
-    
-    if (status) {
-      params.push(status);
-      query += ` AND status = $${params.length}`;
-    }
-    
-    params.push(limit);
-    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
-    
-    const activities = await sql<Activity[]>(query, params);
     
     return NextResponse.json(activities);
   } catch (error) {

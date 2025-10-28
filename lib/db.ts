@@ -69,7 +69,11 @@ export interface Activity {
     | 'calendar_event_added'
     | 'calendar_event_modified'
     | 'webpage_viewed'
-    | 'journal_read';
+    | 'journal_read'
+    | 'task_completed'
+    | 'agent_stopped'
+    | 'user_input'
+    | 'user_message';
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   payload: Record<string, any>;

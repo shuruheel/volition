@@ -28,6 +28,14 @@ const AVAILABLE_TOOLS = [
     sensitive: false,
   },
   {
+    id: 'firecrawl',
+    label: 'Firecrawl Research',
+    description: 'Search and scrape the web via Firecrawl (preferred for research)',
+    icon: 'Search',
+    category: 'Research',
+    sensitive: false,
+  },
+  {
     id: 'supermemory',
     label: 'Supermemory',
     description: 'Long-term memory and knowledge graph storage',

@@ -13,7 +13,7 @@ const browserClient = new BrowserUseClient({
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, maxSteps = 10, wait = true } = body;
+    const { task, maxSteps = 10, wait = false, timeoutMs = 120000, allowedDomains } = body;
     
     if (!task) {
       return NextResponse.json(
@@ -35,18 +35,33 @@ export async function POST(request: NextRequest) {
     const browserTask = await browserClient.tasks.createTask({
       task,
       maxSteps,
+      allowedDomains: Array.isArray(allowedDomains) && allowedDomains.length > 0 ? allowedDomains : undefined,
     });
     
-    // If wait is true, poll for completion
+    // If wait is true, wait up to timeoutMs but do not throw on timeout
     if (wait) {
-      const result = await browserTask.complete();
-      
-      return NextResponse.json({
-        id: result.id,
-        status: result.status,
-        output: result.output,
-        liveUrl: result.liveUrl,
-      });
+      const outcome = await Promise.race([
+        (async () => ({ ok: true as const, r: await browserTask.complete() }))(),
+        new Promise<{ ok: false; timeout: true }>((resolve) =>
+          setTimeout(() => resolve({ ok: false, timeout: true }), timeoutMs)
+        ),
+      ]);
+
+      if ((outcome as any).ok) {
+        const r = (outcome as any).r as any;
+        return NextResponse.json({ id: r.id, status: r.status, output: r.output, liveUrl: r.liveUrl });
+      }
+
+      // Timed out → return pending (202) with task id so caller can poll
+      return NextResponse.json(
+        {
+          id: (browserTask as any).id,
+          status: 'pending',
+          liveUrl: (browserTask as any).liveUrl,
+          message: 'Task not finished within timeout; still processing',
+        },
+        { status: 202 }
+      );
     }
     
     // Otherwise return task ID immediately

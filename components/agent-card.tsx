@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { EditToolsDialog } from "./edit-tools-dialog"
+import { useEffect, useState } from "react"
 
 const TOOL_ICONS = {
   browser: Globe,
@@ -43,6 +44,24 @@ interface AgentCardProps {
 }
 
 export function AgentCard({ agent, onSelect, onToggleStatus, onDelete, onUpdateTools }: AgentCardProps) {
+  const [currentActivity, setCurrentActivity] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/agents/${agent.id}/status`)
+        if (!mounted) return
+        if (res.ok) {
+          const s = await res.json()
+          setCurrentActivity(s?.currentActivity || null)
+        }
+      } catch {}
+    }
+    load()
+    const t = setInterval(load, 2000)
+    return () => { mounted = false; clearInterval(t) }
+  }, [agent.id])
   const statusColors = {
     active: "bg-green-500/10 text-green-500 border-green-500/20",
     idle: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
@@ -79,7 +98,7 @@ export function AgentCard({ agent, onSelect, onToggleStatus, onDelete, onUpdateT
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Activity className="h-3 w-3" />
-            <span>{formatDistanceToNow(agent.lastActive, { addSuffix: true })}</span>
+            <span>{currentActivity ? currentActivity : formatDistanceToNow(agent.lastActive, { addSuffix: true })}</span>
           </div>
           <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
             <EditToolsDialog

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { Activity } from "@/lib/db"
+import { useState } from "react"
 import {
   FileText,
   Mail,
@@ -75,6 +76,12 @@ const ACTIVITY_CONFIG = {
     bgColor: 'bg-pink-100 dark:bg-pink-900/20',
     label: 'Journal Entry',
   },
+  user_input: {
+    icon: FileText,
+    color: 'text-gray-700',
+    bgColor: 'bg-gray-100 dark:bg-gray-900/20',
+    label: 'Agent Question',
+  },
 }
 
 // Status icons and colors
@@ -136,6 +143,25 @@ export function UnifiedActivityCard({
             {payload.title && <p className="font-medium">{payload.title}</p>}
             {payload.description && (
               <p className="text-sm text-muted-foreground">{payload.description}</p>
+            )}
+            {Array.isArray(payload.links) && payload.links.length > 0 && (
+              <div className="mt-2 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Links</p>
+                <ul className="list-disc list-inside text-sm space-y-1">
+                  {payload.links.slice(0, 5).map((link: string, idx: number) => (
+                    <li key={idx}>
+                      <a
+                        href={link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline break-all"
+                      >
+                        {link}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
             {payload.url && (
               <a
@@ -242,6 +268,43 @@ export function UnifiedActivityCard({
           </div>
         )
 
+      case 'user_input': {
+        const [answer, setAnswer] = useState('')
+        const question = payload.question || 'The agent is asking for more information.'
+        const hasAnswer = typeof payload.answer === 'string' && payload.answer.length > 0
+        return (
+          <div className="space-y-3">
+            <p className="text-sm">{question}</p>
+            {hasAnswer ? (
+              <div className="text-sm text-muted-foreground">
+                <span className="font-medium">Your answer:</span> {payload.answer}
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 border rounded px-2 py-1 text-sm bg-transparent"
+                  placeholder="Type your answer..."
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  disabled={!answer.trim()}
+                  onClick={async () => {
+                    if (!answer.trim()) return
+                    // Modify payload to include answer, then approve
+                    await onModify?.(activity.id, { ...payload, answer: answer.trim() })
+                    await onApprove?.(activity.id)
+                  }}
+                >
+                  Send
+                </Button>
+              </div>
+            )}
+          </div>
+        )
+      }
+
       default:
         return (
           <div>
@@ -268,6 +331,11 @@ export function UnifiedActivityCard({
                   <StatusIcon className="h-3 w-3 mr-1" />
                   {statusConfig.label}
                 </Badge>
+                {activity.type === 'research' && activity.payload?.source === 'firecrawl' && (
+                  <Badge variant="outline" className="bg-cyan-100 dark:bg-cyan-900/20 text-cyan-700 border-0">
+                    Firecrawl
+                  </Badge>
+                )}
                 {activity.priority && activity.priority === 'high' && (
                   <Badge variant="outline" className="bg-red-100 dark:bg-red-900/20 text-red-600 border-0">
                     <AlertCircle className="h-3 w-3 mr-1" />

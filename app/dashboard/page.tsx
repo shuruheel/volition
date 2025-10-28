@@ -5,6 +5,7 @@ import type { Agent } from "@/lib/db"
 import { CreateAgentDialog } from "@/components/create-agent-dialog"
 import { UnifiedActivityCard } from "@/components/unified-activity-card"
 import { ChatDrawer } from "@/components/chat-drawer"
+import { AgentStatusCard } from "@/components/agent-status-card"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone } from "lucide-react"
@@ -20,6 +21,7 @@ const INCLUDED_ACTIVITY_TYPES = [
   'calendar_event_modified',
   'webpage_viewed',
   'journal_read',
+  'user_input',
 ]
 
 interface KeyMetrics {
@@ -36,6 +38,8 @@ export default function DashboardPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
+  const [chatTriggerAgentId, setChatTriggerAgentId] = useState<string | null>(null)
+  const [lastPendingQuestionId, setLastPendingQuestionId] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<KeyMetrics>({
     totalSpend: 0,
     activeTasks: 0,
@@ -55,39 +59,62 @@ export default function DashboardPage() {
       .catch((error) => console.error('Failed to fetch agents:', error))
   }, [])
 
-  // Fetch activities with filtering
+  // Activities: initial load + SSE updates
   useEffect(() => {
     const params = new URLSearchParams()
-    if (selectedAgentId) {
-      params.set('agentId', selectedAgentId)
-    }
+    if (selectedAgentId) params.set('agentId', selectedAgentId)
     params.set('types', INCLUDED_ACTIVITY_TYPES.join(','))
     params.set('limit', '50')
 
+    let closed = false
     fetch(`/api/activities?${params.toString()}`)
       .then((res) => res.json())
-      .then((data) => setActivities(data))
+      .then((data) => { if (!closed) setActivities(data) })
       .catch((error) => console.error('Failed to fetch activities:', error))
+
+    const esParams = new URLSearchParams()
+    if (selectedAgentId) esParams.set('agentId', selectedAgentId)
+    esParams.set('types', INCLUDED_ACTIVITY_TYPES.join(','))
+    const es = new EventSource(`/api/activities/stream?${esParams.toString()}&intervalMs=3000`)
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data)
+        const items = Array.isArray(data?.items) ? data.items : []
+        if (items.length === 0) return
+        setActivities((prev) => {
+          const existing = new Set(prev.map((a: any) => a.id))
+          const merged = [...prev]
+          for (const a of items) {
+            if (!existing.has(a.id)) merged.unshift(a)
+          }
+          return merged.slice(0, 50)
+        })
+      } catch {}
+    }
+    es.onerror = () => es.close()
+    return () => { closed = true; es.close() }
   }, [selectedAgentId])
 
-  // Fetch metrics
+  // Metrics: initial fetch + SSE stream
   useEffect(() => {
     const params = new URLSearchParams()
-    if (selectedAgentId) {
-      params.set('agentId', selectedAgentId)
-    }
+    if (selectedAgentId) params.set('agentId', selectedAgentId)
 
     setLoading(true)
     fetch(`/api/metrics/key?${params.toString()}`)
       .then((res) => res.json())
-      .then((data) => {
-        setMetrics(data)
-        setLoading(false)
-      })
-      .catch((error) => {
-        console.error('Failed to fetch metrics:', error)
-        setLoading(false)
-      })
+      .then((data) => { setMetrics(data); setLoading(false) })
+      .catch((error) => { console.error('Failed to fetch metrics:', error); setLoading(false) })
+
+    const es = new EventSource(`/api/metrics/stream?${params.toString()}&intervalMs=4000`)
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data)
+        setMetrics((prev) => ({ ...prev, ...data }))
+      } catch {}
+    }
+    es.onerror = () => es.close()
+    return () => es.close()
   }, [selectedAgentId])
 
   const handleCreateAgent = async (name: string, prompt: string, tools: string[]) => {
@@ -111,21 +138,38 @@ export default function DashboardPage() {
     const agent = agents.find((a) => a.id === agentId)
     if (!agent) return
     
-    const newStatus = agent.status === 'active' ? 'idle' : 'active'
+    const isStarting = agent.status !== 'active'
+    const endpoint = isStarting ? 'start' : 'stop'
     
     try {
-      const response = await fetch(`/api/agents/${agentId}`, {
-        method: 'PATCH',
+      const response = await fetch(`/api/agents/${agentId}/${endpoint}`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ 
+          task: isStarting ? 'Start working on your assigned tasks' : undefined 
+        }),
       })
       
-      if (!response.ok) throw new Error('Failed to update agent')
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to update agent')
+      }
       
-      const updatedAgent = await response.json()
+      const { agent: updatedAgent } = await response.json()
       setAgents(agents.map((a) => (a.id === agentId ? updatedAgent : a)))
+      
+      // Refresh metrics after status change
+      const params = new URLSearchParams()
+      if (selectedAgentId) {
+        params.set('agentId', selectedAgentId)
+      }
+      fetch(`/api/metrics/key?${params.toString()}`)
+        .then((res) => res.json())
+        .then((data) => setMetrics(data))
+        .catch((error) => console.error('Failed to refresh metrics:', error))
     } catch (error) {
       console.error('Failed to toggle agent status:', error)
+      alert(error instanceof Error ? error.message : 'Failed to toggle agent status')
     }
   }
 
@@ -194,6 +238,17 @@ export default function DashboardPage() {
       console.error('Failed to modify activity:', error)
     }
   }
+
+  // Auto-open chat only once per newest pending question
+  useEffect(() => {
+    const latestPending = activities
+      .filter((a) => a.type === 'user_input' && a.status === 'pending')
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+    if (latestPending && latestPending.id !== lastPendingQuestionId) {
+      setChatTriggerAgentId(latestPending.agent_id)
+      setLastPendingQuestionId(latestPending.id)
+    }
+  }, [activities, lastPendingQuestionId])
 
   const statusColors = {
     active: "bg-green-500",
@@ -357,6 +412,13 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Agent Status (if agent is selected) */}
+        {selectedAgentId && (
+          <div className="mb-6">
+            <AgentStatusCard agentId={selectedAgentId} />
+          </div>
+        )}
+
         <div className="mb-6">
           <h2 className="text-xl font-semibold mb-4">Activity Feed</h2>
           {activities.length > 0 ? (
@@ -388,7 +450,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Chat drawer */}
-      <ChatDrawer agents={agents} />
+      <ChatDrawer agents={agents} triggerAgentId={chatTriggerAgentId} />
     </div>
   )
 }
