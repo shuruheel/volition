@@ -22,20 +22,34 @@ export async function POST(
     const body = await request.json();
     const { task } = body;
     
-    // Atomically set status to active only if not already active
-    const updated = await sql<Agent[]>`
-      UPDATE agents
-      SET status = 'active', updated_at = NOW()
-      WHERE id = ${id} AND status <> 'active'
-      RETURNING *
+    // Fetch agent
+    const agents = await sql<Agent[]>`
+      SELECT * FROM agents WHERE id = ${id}
     `;
-
-    if (updated.length === 0) {
+    
+    if (agents.length === 0) {
+      return NextResponse.json(
+        { error: 'Agent not found' },
+        { status: 404 }
+      );
+    }
+    
+    const agent = agents[0];
+    
+    // Check if already active
+    if (agent.status === 'active') {
       return NextResponse.json(
         { error: 'Agent is already active' },
         { status: 400 }
       );
     }
+    
+    // Update status to active
+    await sql`
+      UPDATE agents
+      SET status = 'active', updated_at = NOW()
+      WHERE id = ${id}
+    `;
     
     // Initialize agent status
     await updateAgentStatus(id, {
@@ -56,7 +70,7 @@ export async function POST(
     console.log(`[Agent Start] Workflow started with runId: ${run.runId}`);
     
     return NextResponse.json({
-      agent: updated[0],
+      agent: await sql<Agent[]>`SELECT * FROM agents WHERE id = ${id}`.then(r => r[0]),
       message: 'Agent workflow started successfully',
       runId: run.runId,
       workflowInvoked: true,

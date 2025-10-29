@@ -274,29 +274,6 @@ export async function getAgentContextStep(agentId: string, historyLimit: number 
 }
 
 /**
- * Execute AI generateText call in a step (required for Vercel Workflow compatibility)
- */
-export async function generateTextStep(params: {
-  model: any;
-  system: string;
-  messages: any[];
-  tools: Record<string, any>;
-  maxSteps: number;
-}) {
-  'use step';
-  
-  const { generateText } = await import('ai');
-  
-  return await generateText({
-    model: params.model,
-    system: params.system,
-    messages: params.messages,
-    tools: params.tools,
-    maxSteps: params.maxSteps,
-  });
-}
-
-/**
  * Update agent status in database (for real-time UI updates)
  */
 export async function updateAgentStatusStep(agentId: string, update: {
@@ -345,6 +322,33 @@ export async function clearAgentStatusStep(agentId: string) {
     totalSteps: 0,
     currentActivity: null,
     currentTool: null,
+  });
+}
+
+/**
+ * Generate text using AI SDK (must be in step function)
+ *
+ * IMPORTANT: generateText from AI SDK cannot be called directly in workflow functions
+ * because it relies on globals that are not available inside the workflow sandbox.
+ * Always delegate AI SDK calls to step functions.
+ */
+export async function generateTextStep(params: {
+  model: any;
+  system: string;
+  messages: any[];
+  tools: Record<string, any>;
+  maxSteps: number;
+}) {
+  'use step';
+
+  const { generateText } = await import('ai');
+
+  return await generateText({
+    model: params.model,
+    system: params.system,
+    messages: params.messages,
+    tools: params.tools,
+    maxSteps: params.maxSteps,
   });
 }
 

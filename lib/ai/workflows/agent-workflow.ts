@@ -28,6 +28,7 @@ import {
   getAgentContextStep,
   updateAgentStatusStep,
   clearAgentStatusStep,
+  generateTextStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -80,8 +81,17 @@ export async function agentTaskWorkflow(
         currentActivity: `Step ${currentStep + 1}/${maxSteps}`,
       });
 
-      // Build tools for this step
-      const tools = {
+      // Call LLM to decide next action
+      const result = await generateTextStep({
+        model: openai('gpt-5-2025-08-07'),
+        system: systemPrompt,
+        messages: [
+          ...history,
+          ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
+          ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
+          { role: 'user', content: initialPrompt },
+        ],
+        tools: {
           // Research tools
           startResearchSession: {
             description: 'STEP 1 of research workflow. Start a new research session with a title. After calling this, you MUST call firecrawlResearch multiple times.',
@@ -277,22 +287,8 @@ export async function agentTaskWorkflow(
               return { success: true, message: 'Activity logged' };
             },
           },
-        };
-
-      // Dynamically import AI SDK within the workflow to avoid bundling issues
-      const { generateText } = await import('ai');
-
-      const result = await generateText({
-        model: openai('gpt-5-2025-08-07'),
-        system: systemPrompt,
-        messages: [
-          ...history,
-          ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
-          ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
-          { role: 'user', content: initialPrompt },
-        ],
-        tools,
-        maxSteps: 1,
+        },
+        maxSteps: 1, // One LLM call per workflow step
       });
 
       // Check finish reason
