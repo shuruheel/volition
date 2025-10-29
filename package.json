@@ -71,6 +71,7 @@
     "tailwindcss-animate": "^1.0.7",
     "twilio": "^5.10.3",
     "vaul": "^1.1.2",
+    "workflow": "4.0.1-beta.4",
     "ws": "^8.18.3",
     "zod": "^4.0.0"
   },

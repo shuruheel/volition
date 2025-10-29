@@ -7,7 +7,8 @@ alwaysApply: true
 
 This is an AI Agent Dashboard built with:
 - **Next.js 16** (App Router, Route Handlers, React Server Components)
-- **Vercel AI SDK 6** (ToolLoopAgent for agent orchestration)
+- **Vercel Workflow** (durable, resumable agent execution)
+- **Vercel AI SDK 6** (generateText for LLM orchestration)
 - **Neon Postgres** (serverless database with branching)
 - **Supermemory** (graph memory for AI agents)
 - **Browser-Use Cloud** (AI-powered browser automation)
@@ -34,7 +35,11 @@ app/
 
 lib/
 ├── ai/
-│   ├── agent.ts          # ToolLoopAgent orchestration
+│   ├── workflows/        # Vercel Workflow orchestration
+│   │   ├── agent-workflow.ts  # Main durable workflow
+│   │   ├── hooks.ts      # Human-in-the-loop hooks
+│   │   └── steps.ts      # Reusable workflow steps
+│   ├── agent.legacy.ts   # Old orchestration (archived)
 │   └── tools/            # Custom AI SDK tools
 ├── db.ts                 # Neon serverless driver
 ├── crypto.ts             # AES-GCM encryption for secrets
@@ -65,15 +70,23 @@ Reference: [db/migrations/001_init.sql](mdc:db/migrations/001_init.sql)
 
 ## Agent Orchestration Flow
 
-1. **ToolLoopAgent** (Vercel AI SDK 6) manages the agent loop
-2. **Tools** available to agents:
-   - `supermemoryTools()` - Memory operations (store/recall)
-   - `browserTaskTool` - Browser automation via Browser-Use Cloud
-   - `logActivityTool` - Write activities to database
-3. **Safety**: Use `stopWhen` to limit steps, Zod schemas for validation
-4. **Observability**: Use `onStepFinish` to log steps and usage
+**Now using Vercel Workflow for durable, resumable execution:**
 
-Reference: [lib/ai/agent.ts](mdc:lib/ai/agent.ts)
+1. **Vercel Workflow** manages agent execution (durable, survives restarts)
+2. **Hooks** handle human-in-the-loop for approvals and user input:
+   - `userInputHook` - Pause for user questions
+   - `phoneCallHook` - Pause for call approvals
+   - `emailApprovalHook` - Pause for email approvals
+   - `activityApprovalHook` - Generic approval hook
+3. **Steps** execute isolated units of work with automatic retries:
+   - `executeResearchStep` - Search, scrape, store content
+   - `executeBrowserStep` - Browser automation
+   - `logActivityStep` - Log activities to database
+   - Research session steps (start, append, complete)
+4. **Observability** built-in via Vercel dashboard (Observability → Workflows)
+
+Reference: [lib/ai/workflows/agent-workflow.ts](mdc:lib/ai/workflows/agent-workflow.ts)
+Documentation: [docs/workflow-implementation.md](mdc:docs/workflow-implementation.md)
 
 ## Activity Feed Filtering
 
