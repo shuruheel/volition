@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
 import { updateAgentStatus } from '@/lib/agent-status';
+import { start } from 'workflow/api';
 import { agentTaskWorkflow } from '@/lib/ai/workflows/agent-workflow';
 
 interface RouteContext {
@@ -62,21 +63,16 @@ export async function POST(
     
     console.log(`[Agent Start] Invoking workflow for agent ${id}`);
     
-    // Start workflow directly (Vercel Workflow handles background execution)
-    // DO NOT use fetch() to call our own API - this is an anti-pattern
-    agentTaskWorkflow(id, prompt, 40).catch(error => {
-      console.error('[Agent Start] Failed to start workflow:', error);
-      // Update status to error
-      sql`
-        UPDATE agents
-        SET status = 'error', updated_at = NOW()
-        WHERE id = ${id}
-      `.catch(err => console.error('Failed to update agent status:', err));
-    });
+    // CRITICAL: Use start() from workflow/api to properly invoke the workflow
+    // This enqueues the workflow and returns a Run object
+    const run = await start(agentTaskWorkflow, [id, prompt, 40]);
+    
+    console.log(`[Agent Start] Workflow started with runId: ${run.runId}`);
     
     return NextResponse.json({
       agent: await sql<Agent[]>`SELECT * FROM agents WHERE id = ${id}`.then(r => r[0]),
       message: 'Agent workflow started successfully',
+      runId: run.runId,
       workflowInvoked: true,
     });
   } catch (error) {

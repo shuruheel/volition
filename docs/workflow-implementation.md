@@ -163,6 +163,44 @@ Vercel Workflow provides:
 - **Automatic retries** for failed steps
 - **Zero-cost pausing** (no resources consumed while waiting)
 
+### Critical Configuration Requirements
+
+**REQUIRED**: Your `next.config.mjs` MUST be wrapped with `withWorkflow()`:
+
+```javascript
+import { withWorkflow } from 'workflow/next'
+
+const nextConfig = {
+  // your config
+}
+
+export default withWorkflow(nextConfig)
+```
+
+Without this wrapper:
+- ❌ Workflows will fail silently
+- ❌ `"use workflow"` and `"use step"` directives won't work
+- ❌ No error messages will appear in logs
+
+### Deployment Environments
+
+**Vercel Workflow uses "Worlds" - adapters for different environments:**
+
+1. **Local Development** (Automatic)
+   - Uses "Embedded World" (filesystem-based)
+   - Stores data in `.workflow-data/` directory
+   - No configuration needed
+
+2. **Vercel Production** (Automatic)
+   - Uses "Vercel World" (production-ready)
+   - Integrated with Vercel's infrastructure
+   - No special console configuration needed
+   - Works automatically once code is deployed
+
+3. **Other Platforms** (Manual Setup)
+   - Requires custom "World" implementation
+   - See [Deploying Documentation](https://useworkflow.dev/docs/deploying)
+
 ### Key Components
 
 ```
