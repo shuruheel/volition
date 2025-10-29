@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { MessageSquare, X, Send } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Agent } from "@/lib/auth"
+import ReactMarkdown from 'react-markdown'
 
 interface Message {
   id: string

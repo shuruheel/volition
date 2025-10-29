@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Memory } from '@/lib/db';
+import Supermemory from 'supermemory'
 
 /**
  * GET /api/memories/search
@@ -12,24 +13,37 @@ export async function GET(request: NextRequest) {
     const agentId = searchParams.get('agentId');
     const kind = searchParams.get('kind');
     const limit = parseInt(searchParams.get('limit') || '20');
+    const q = searchParams.get('q') || ''
     
-    let query = 'SELECT * FROM memories WHERE 1=1';
-    const params: any[] = [];
-    
+    // Prefer Supermemory search for documents
+    if (process.env.SUPERMEMORY_API_KEY && agentId && (!kind || kind === 'document')) {
+      const sm = new Supermemory({ apiKey: process.env.SUPERMEMORY_API_KEY! })
+      const results = await sm.search.documents({
+        q: q || 'recent research documents',
+        // Use boolean group with key/value matcher
+        filters: { AND: [{ key: 'metadata.agentId', value: agentId }] },
+        limit,
+      })
+      return NextResponse.json(
+        (results.items ?? []).map((it: any) => ({
+          provider_id: it.id,
+          created_at: it.createdAt,
+          kind: 'document',
+          metadata: it.metadata,
+        }))
+      )
+    }
+
+    // Fallback: Neon references
+    let query = sql`SELECT * FROM memories WHERE 1=1`;
     if (agentId) {
-      params.push(agentId);
-      query += ` AND agent_id = $${params.length}`;
+      query = sql`${query} AND agent_id = ${agentId}`;
     }
-    
     if (kind) {
-      params.push(kind);
-      query += ` AND kind = $${params.length}`;
+      query = sql`${query} AND kind = ${kind}`;
     }
-    
-    params.push(limit);
-    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
-    
-    const memories = await sql<Memory[]>(query, params);
+    query = sql`${query} ORDER BY created_at DESC LIMIT ${limit}`;
+    const memories = await query as unknown as Memory[];
     
     return NextResponse.json(memories);
   } catch (error) {

@@ -10,11 +10,26 @@ export async function GET(request: NextRequest) {
 
   const encoder = new TextEncoder()
 
+  let closed = false
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      controller.enqueue(encoder.encode(`: connected\n\n`))
+      // Send initial connection message
+      try {
+        controller.enqueue(encoder.encode(`: connected\n\n`))
+      } catch (e) {
+        // Controller already closed
+        closed = true
+        return
+      }
 
       const timer = setInterval(async () => {
+        // Stop if stream is closed
+        if (closed) {
+          clearInterval(timer)
+          return
+        }
+
         try {
           const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
 
@@ -46,14 +61,41 @@ export async function GET(request: NextRequest) {
             callsMade: parseInt(callsMadeStr, 10),
           }
 
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+          // Guard against closed controller
+          if (!closed) {
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+            } catch (e) {
+              // Controller closed, stop interval
+              closed = true
+              clearInterval(timer)
+            }
+          }
         } catch (e) {
-          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ message: 'metrics_error' })}\n\n`))
+          // Only send error if controller is still open
+          if (!closed) {
+            try {
+              controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ message: 'metrics_error' })}\n\n`))
+            } catch {
+              closed = true
+              clearInterval(timer)
+            }
+          }
         }
       }, intervalMs)
 
-      // @ts-ignore
-      request.signal?.addEventListener('abort', () => clearInterval(timer))
+      // Handle client disconnect
+      const cleanup = () => {
+        closed = true
+        clearInterval(timer)
+      }
+
+      request.signal?.addEventListener('abort', cleanup)
+    },
+    
+    cancel() {
+      // Stream cancelled by client
+      closed = true
     },
   })
 

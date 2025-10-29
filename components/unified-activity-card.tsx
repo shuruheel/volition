@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { Activity } from "@/lib/db"
 import { useState } from "react"
+import { cn } from "@/lib/utils"
 import {
   FileText,
   Mail,
@@ -15,8 +16,11 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
+import ReactMarkdown from 'react-markdown'
 
 interface UnifiedActivityCardProps {
   activity: Activity
@@ -80,7 +84,7 @@ const ACTIVITY_CONFIG = {
     icon: FileText,
     color: 'text-gray-700',
     bgColor: 'bg-gray-100 dark:bg-gray-900/20',
-    label: 'Agent Question',
+    label: 'Question',
   },
 }
 
@@ -141,8 +145,10 @@ export function UnifiedActivityCard({
         return (
           <div className="space-y-2">
             {payload.title && <p className="font-medium">{payload.title}</p>}
-            {payload.description && (
-              <p className="text-sm text-muted-foreground">{payload.description}</p>
+            {(payload.summary || payload.description) && (
+              <div className="prose prose-invert max-w-none text-sm">
+                <ReactMarkdown>{String(payload.summary || payload.description)}</ReactMarkdown>
+              </div>
             )}
             {Array.isArray(payload.links) && payload.links.length > 0 && (
               <div className="mt-2 space-y-1">
@@ -270,35 +276,118 @@ export function UnifiedActivityCard({
 
       case 'user_input': {
         const [answer, setAnswer] = useState('')
+        const [isExpanded, setIsExpanded] = useState(false)
         const question = payload.question || 'The agent is asking for more information.'
         const hasAnswer = typeof payload.answer === 'string' && payload.answer.length > 0
+        
+        // Check if content is long enough to need collapsing (roughly 17 lines = ~1000 chars)
+        const isLongContent = question.length > 1000
+        
         return (
           <div className="space-y-3">
-            <p className="text-sm">{question}</p>
+            <div className="relative">
+              <div 
+                className={cn(
+                  "prose prose-sm prose-invert max-w-none prose-headings:font-bold prose-headings:text-foreground prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-3 prose-ul:my-3 prose-li:my-1 prose-a:text-blue-400 prose-a:underline prose-strong:text-foreground prose-code:text-blue-300",
+                  !isExpanded && isLongContent && "max-h-[400px] overflow-hidden"
+                )}
+              >
+                <ReactMarkdown
+                  components={{
+                    h1: ({ node, ...props }) => <h1 className="text-xl font-bold mt-6 mb-3 text-foreground" {...props} />,
+                    h2: ({ node, ...props }) => <h2 className="text-lg font-bold mt-5 mb-2 text-foreground" {...props} />,
+                    h3: ({ node, ...props }) => <h3 className="text-base font-semibold mt-4 mb-2 text-foreground" {...props} />,
+                    p: ({ node, ...props }) => <p className="my-3 leading-relaxed" {...props} />,
+                    ul: ({ node, ...props }) => <ul className="my-3 space-y-1 list-disc pl-6" {...props} />,
+                    ol: ({ node, ...props }) => <ol className="my-3 space-y-1 list-decimal pl-6" {...props} />,
+                    li: ({ node, children, ...props }) => {
+                      // Convert numbered list items starting with keywords to headings
+                      const text = String(children)
+                      if (text.match(/^(Executive summary|Key techniques|Advanced reasoning|Evaluation)/i)) {
+                        return <h3 className="text-base font-semibold mt-4 mb-2 text-foreground list-none -ml-6">{children}</h3>
+                      }
+                      return <li className="my-1" {...props}>{children}</li>
+                    },
+                    a: ({ node, ...props }) => <a className="text-blue-400 hover:text-blue-300 underline break-words" target="_blank" rel="noopener noreferrer" {...props} />,
+                    code: ({ node, inline, ...props }: any) => 
+                      inline 
+                        ? <code className="bg-gray-800 px-1 py-0.5 rounded text-sm text-blue-300" {...props} />
+                        : <code className="block bg-gray-800 p-2 rounded my-2 text-sm overflow-x-auto" {...props} />,
+                  }}
+                >
+                  {String(question)}
+                </ReactMarkdown>
+              </div>
+              
+              {/* Fade overlay when collapsed */}
+              {!isExpanded && isLongContent && (
+                <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
+              )}
+            </div>
+            
+            {/* Show more/less button */}
+            {isLongContent && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="w-full text-muted-foreground hover:text-foreground"
+              >
+                {isExpanded ? (
+                  <>
+                    <ChevronUp className="h-4 w-4 mr-1" />
+                    Show less
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="h-4 w-4 mr-1" />
+                    Show more
+                  </>
+                )}
+              </Button>
+            )}
             {hasAnswer ? (
               <div className="text-sm text-muted-foreground">
                 <span className="font-medium">Your answer:</span> {payload.answer}
               </div>
             ) : (
-              <div className="flex gap-2">
-                <input
-                  className="flex-1 border rounded px-2 py-1 text-sm bg-transparent"
-                  placeholder="Type your answer..."
-                  value={answer}
-                  onChange={(e) => setAnswer(e.target.value)}
-                />
-                <Button
-                  size="sm"
-                  disabled={!answer.trim()}
-                  onClick={async () => {
-                    if (!answer.trim()) return
-                    // Modify payload to include answer, then approve
-                    await onModify?.(activity.id, { ...payload, answer: answer.trim() })
-                    await onApprove?.(activity.id)
-                  }}
-                >
-                  Send
-                </Button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 border rounded px-2 py-1 text-sm bg-transparent"
+                    placeholder="Type your answer..."
+                    value={answer}
+                    onChange={(e) => setAnswer(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && answer.trim()) {
+                        onModify?.(activity.id, { ...payload, answer: answer.trim() })
+                        onApprove?.(activity.id)
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!answer.trim()}
+                    onClick={async () => {
+                      if (!answer.trim()) return
+                      // Modify payload to include answer, then approve
+                      await onModify?.(activity.id, { ...payload, answer: answer.trim() })
+                      await onApprove?.(activity.id)
+                    }}
+                  >
+                    Send
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      // Reject the question - agent will end work session
+                      await onReject?.(activity.id)
+                    }}
+                  >
+                    End Work Session
+                  </Button>
+                </div>
               </div>
             )}
           </div>
@@ -353,7 +442,7 @@ export function UnifiedActivityCard({
       <CardContent>
         {renderActivityContent()}
 
-        {isPending && (onApprove || onReject) && (
+        {isPending && (onApprove || onReject) && activity.type !== 'user_input' && (
           <div className="flex gap-2 mt-4 pt-4 border-t border-border">
             {onApprove && (
               <Button size="sm" onClick={() => onApprove(activity.id)}>

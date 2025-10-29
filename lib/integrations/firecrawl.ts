@@ -127,4 +127,66 @@ export async function scrapeFirecrawl(params: ScrapeParams): Promise<FirecrawlSc
   };
 }
 
+// Unified search+scrape in one request using Firecrawl /search with scrapeOptions
+export interface SearchAndScrapeParams extends Omit<SearchParams, 'limit'> {
+  limit?: number;
+  scrapeOptions?: {
+    formats?: Array<'markdown' | 'links' | 'html'>;
+    onlyMainContent?: boolean;
+    timeout?: number;
+  };
+}
+
+export interface SearchAndScrapeItem {
+  url: string;
+  title?: string;
+  description?: string;
+  markdown?: string;
+  links?: string[];
+  metadata?: Record<string, any>;
+}
+
+export interface SearchAndScrapeResult {
+  items: SearchAndScrapeItem[];
+}
+
+export async function searchAndScrape(params: SearchAndScrapeParams): Promise<SearchAndScrapeResult> {
+  const body: any = {
+    query: params.query,
+    limit: Math.min(Math.max(params.limit ?? 3, 1), 10),
+    sources: params.sources,
+    categories: params.categories,
+  };
+
+  const scrapeOptions = params.scrapeOptions ?? { formats: ['markdown', 'links'], onlyMainContent: true };
+  if (scrapeOptions) {
+    body.scrapeOptions = {
+      formats: scrapeOptions.formats ?? ['markdown', 'links'],
+      onlyMainContent: scrapeOptions.onlyMainContent ?? true,
+      timeout: scrapeOptions.timeout ?? 120000,
+    };
+  }
+
+  const json = await doFetch<any>('/search', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+  // When scrapeOptions are provided, Firecrawl returns an array in data
+  const data = Array.isArray(json?.data) ? json.data : [];
+  const items: SearchAndScrapeItem[] = [];
+  for (const it of data) {
+    if (!it || typeof it.url !== 'string') continue;
+    items.push({
+      url: it.url,
+      title: it.title,
+      description: it.description ?? it.snippet,
+      markdown: it.markdown,
+      links: Array.isArray(it.links) ? it.links : undefined,
+      metadata: it.metadata,
+    });
+  }
+  return { items };
+}
+
 

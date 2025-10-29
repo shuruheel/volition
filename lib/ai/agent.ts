@@ -7,13 +7,16 @@ import { createPendingActivityTool } from './tools/create-pending-activity';
 import { checkApprovalTool } from './tools/check-approval';
 import { askUserTool } from './tools/ask-user';
 import { planNextStepTool } from './tools/plan-next-step';
-import { firecrawlSearchTool } from './tools/firecrawl-search';
-import { firecrawlScrapeTool } from './tools/firecrawl-scrape';
+import { firecrawlResearchTool } from './tools/firecrawl-research';
+import { startResearchSessionTool } from './tools/start-research-session';
+import { completeResearchSessionTool } from './tools/complete-research-session';
+import { searchAndScrape } from '@/lib/integrations/firecrawl';
+import { storeMarkdown } from '@/lib/integrations/supermemory';
 import { updateAgentStatus } from '@/lib/agent-status';
 import { withHITLGuidelines } from './prompts';
 import type { Agent } from '../db';
 import { getLastChatTurns, hasPendingUserInput } from './chat-history';
-import { getRecentResearchContext } from './research-context';
+import { getRecentResearchContext, getRecentMemoriesContext } from './research-context';
 
 /**
  * Agent orchestration using Vercel AI SDK 6 ToolLoopAgent
@@ -48,23 +51,17 @@ export interface AgentStatusUpdate {
 export function createAgentTools(agent: Agent) {
   const tools: Record<string, any> = {};
   
-  // Add tools based on agent's enabled tools
-  if (agent.tools.includes('supermemory') || agent.tools.includes('neo4j')) {
-    // Supermemory provides memory storage and retrieval
-    const supermemoryApiKey = process.env.SUPERMEMORY_API_KEY;
-    if (supermemoryApiKey) {
-      const memoryTools = supermemoryTools(supermemoryApiKey);
-      Object.assign(tools, memoryTools);
-    }
-  }
+  // Do NOT expose Supermemory tools to the LLM; we manage storage/search internally.
+  // Neon remains for metrics, while Supermemory is the source of truth for documents.
   
   if (agent.tools.includes('browser')) {
     tools.browserTask = browserTaskTool;
   }
   // Firecrawl research tools (enabled via explicit permission)
   if (agent.tools.includes('firecrawl')) {
-    tools.firecrawlSearch = firecrawlSearchTool;
-    tools.firecrawlScrape = firecrawlScrapeTool;
+    tools.startResearchSession = startResearchSessionTool;
+    tools.firecrawlResearch = firecrawlResearchTool;
+    tools.completeResearchSession = completeResearchSessionTool;
   }
   
   // Always include activity logging
@@ -94,10 +91,14 @@ export async function executeAgentTask(
   try {
     let currentStep = 0;
     let systemPrompt = withHITLGuidelines(agent.prompt);
+    let currentSessionId: string | null = null;
+    let kickoffHintGiven = false;
+    let researchStarted = false; // Track if any firecrawlResearch calls have been made
 
     // Build DB-backed chat context (last 20 turns)
     const history = await getLastChatTurns(agent.id, 20);
     const researchContext = await getRecentResearchContext(agent.id, 5);
+    const memoryContext = await getRecentMemoriesContext(agent.id, 5);
     const pending = await hasPendingUserInput(agent.id);
     if (pending) {
       systemPrompt += `\n\nNote: There is a pending user question awaiting approval. Do not re-ask. Wait by polling approval instead.`;
@@ -110,26 +111,133 @@ export async function executeAgentTask(
         // History comes without a system message; we already set system above
         ...history,
         ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
+        ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
         { role: 'user', content: prompt },
       ],
       tools,
       maxSteps,
-      experimental_context: { agentId: agent.id },
+      experimental_context: { 
+        agentId: agent.id,
+        get currentSessionId() { return currentSessionId }, // Pass current session to tools
+      },
+      
+      // CRITICAL: Prevent stopping until research has actually happened
+      stopWhen: ({ text, toolCalls, finishReason }) => {
+        // Stop immediately on errors or length limit
+        if (finishReason === 'error' || finishReason === 'length') {
+          return true; // Stop
+        }
+        
+        // If a research session exists but research hasn't started, PREVENT stopping
+        if (currentSessionId && !researchStarted) {
+          console.log(`⚠️ Stop prevented: Session ${currentSessionId} has no research yet (step ${currentStep})`);
+          return false; // Force continuation - DON'T stop!
+        }
+        
+        // Otherwise, respect the model's natural stopping point
+        return finishReason === 'stop';
+      },
+      // Guide the model to continue after session start
+      prepareStep: async ({ steps }) => {
+        // First nudge: Immediately after session creation
+        if (currentSessionId && !kickoffHintGiven) {
+          kickoffHintGiven = true;
+          return {
+            messages: [
+              { 
+                role: 'system', 
+                content: `RESEARCH SESSION CREATED (ID: ${currentSessionId})
+
+You have completed STEP 1 of the research workflow. Now you MUST proceed to STEP 2.
+
+Next action required:
+→ Call firecrawlResearch with:
+  - query: A focused search query derived from the user's request
+  - limit: 3
+  - NOTE: session_id is automatically tracked, but you can pass it explicitly if needed
+
+After that, continue calling firecrawlResearch 2-4 more times with different angles, then finalize with completeResearchSession.
+
+Remember: The session is just a container. You must populate it with actual research before stopping.`
+              },
+            ],
+          };
+        }
+        
+        // Second nudge: If session exists but no research has started after 3+ steps
+        if (currentSessionId && !researchStarted && currentStep >= 3) {
+          return {
+            messages: [
+              {
+                role: 'system',
+                content: `⚠️ RESEARCH SESSION ALERT
+
+Session ${currentSessionId} was created ${currentStep - 1} steps ago but NO research has been performed yet!
+
+You MUST call firecrawlResearch now to gather information. The session is empty and will be useless without actual research data.
+
+Call firecrawlResearch immediately with a focused query related to the user's request.`
+              },
+            ],
+          };
+        }
+        
+        return {};
+      },
       
       onStepFinish: async ({ text, toolCalls, toolResults, finishReason, usage }) => {
         currentStep++;
         
         const toolNames = toolCalls.map(c => c.toolName);
         const usedFirecrawl = toolNames.some(n => n === 'firecrawlSearch' || n === 'firecrawlScrape');
+        const usedResearch = toolNames.some(n => n === 'firecrawlResearch');
+        
+        // Track if research has started
+        if (usedResearch) {
+          researchStarted = true;
+        }
+        
+        // Track research session id FIRST (before logging)
+        try {
+          for (let i = 0; i < toolCalls.length; i++) {
+            const call = toolCalls[i];
+            if (call.toolName === 'startResearchSession') {
+              // Debug: log the actual structure
+              console.log('DEBUG toolResults[i]:', JSON.stringify(toolResults[i], null, 2));
+              
+              // Try different paths to access the result
+              const res = (toolResults[i]?.result || toolResults[i]) as any;
+              
+              console.log('DEBUG res:', JSON.stringify(res, null, 2));
+              
+              if (res?.success && res?.session_id) {
+                currentSessionId = res.session_id as string;
+                console.log(`✅ Research session created: ${currentSessionId}`);
+                await updateAgentStatus(agent.id, {
+                  status: 'active',
+                  currentStep,
+                  totalSteps: maxSteps,
+                  currentActivity: 'Research session started',
+                  currentTool: 'firecrawl',
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Session tracking failed:', e);
+        }
+        
+        // Now log with correct session info
         console.log(`Agent ${agent.id} - Step ${currentStep}/${maxSteps} completed:`, {
           toolCallsCount: toolCalls.length,
           tools: toolNames,
           finishReason,
           usage,
           tags: usedFirecrawl ? ['source=firecrawl'] : [],
+          researchSession: currentSessionId ? { id: currentSessionId, started: researchStarted } : null,
         });
         
-        // Check if agent created a pending activity and reflect waiting status
+        // Track other activities
         try {
           for (let i = 0; i < toolCalls.length; i++) {
             const call = toolCalls[i];
@@ -238,6 +346,67 @@ export async function executeAgentTask(
       },
     });
     
+    // Fallback: if a session was started but no notes were appended (model stalled),
+    // bootstrap the session with one search using the original prompt.
+    try {
+      if (currentSessionId) {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        const activityResp = await fetch(`${baseUrl}/api/activities/${currentSessionId}`);
+        if (activityResp.ok) {
+          const activity = await activityResp.json();
+          const payload = (activity?.payload ?? {}) as any;
+          const notes: string[] = Array.isArray(payload.notes) ? payload.notes : [];
+          if (notes.length === 0) {
+            // Run one deterministic kickoff search+scrape with the user's prompt
+            const kickoff = await searchAndScrape({ query: prompt.slice(0, 200), limit: 3, scrapeOptions: { formats: ['markdown', 'links'] } });
+            const appendedNotes: string[] = [];
+            const links: string[] = [];
+            for (const it of kickoff.items) {
+              if (!it?.url) continue;
+              if (it.markdown) {
+                await storeMarkdown({ agentId: agent.id, url: it.url, title: it.title, markdown: it.markdown.slice(0, 40000) });
+                // Summarize briefly for the session notes
+                try {
+                  const { text } = await generateText({
+                    model: openai('gpt-4o-mini'),
+                    temperature: 0.2,
+                    prompt: `Summarize this page into 4–8 bullets with a single inline URL (${it.url}). Focus on concrete facts, methods, metrics.\n\n${(it.markdown || '').slice(0, 8000)}`,
+                  });
+                  appendedNotes.push(text);
+                } catch {
+                  appendedNotes.push(`- ${it.title ?? it.url}`);
+                }
+              }
+              links.push(it.url);
+            }
+            if (appendedNotes.length > 0 || links.length > 0) {
+              await fetch(`${baseUrl}/api/research/sessions/${currentSessionId}/append`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: prompt.slice(0, 200), links, notes: appendedNotes }),
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Kickoff fallback failed:', e);
+    }
+
+    // Auto-complete session if we reached finish without explicit completion
+    try {
+      if (currentSessionId) {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        await fetch(`${baseUrl}/api/research/sessions/${currentSessionId}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      }
+    } catch (e) {
+      console.error('Auto-complete research session failed:', e);
+    }
+
     return {
       text: result.text,
       steps: result.steps,

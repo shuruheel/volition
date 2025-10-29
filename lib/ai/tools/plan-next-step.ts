@@ -7,13 +7,13 @@ import { z } from 'zod'
  */
 export const planNextStepTool = tool({
   description:
-    'Plan the next step in an iterative research workflow. Always call this after each action. Choose among: "firecrawlSearch" to discover sources; "firecrawlScrape" to extract content; "browserTask" for interactive/complex web actions; "askUser" for clarification; or "stop" when finished.',
+    'Plan the next step in an iterative research workflow. Always call this after each action. Choose among: "startResearchSession" to open a session; "firecrawlResearch" to search+scrape top 3; "completeResearchSession" to finalize; "browserTask" for interactive actions; "askUser" for clarification; or "stop" when finished.',
   inputSchema: z.object({
-    nextAction: z.enum(['firecrawlSearch', 'firecrawlScrape', 'browserTask', 'askUser', 'stop']).describe('What to do next'),
+    nextAction: z.enum(['startResearchSession', 'firecrawlResearch', 'completeResearchSession', 'browserTask', 'askUser', 'stop']).describe('What to do next'),
     task: z
       .string()
       .optional()
-      .describe('If nextAction is firecrawlSearch/firecrawlScrape/browserTask, describe the specific query, URL, or action'),
+      .describe('If nextAction is firecrawlResearch/browserTask, describe the specific query or action'),
     reason: z.string().describe('Brief rationale for the selected nextAction'),
     exitReason: z
       .string()

@@ -85,7 +85,9 @@ export async function GET(request: NextRequest) {
       `;
     }
     
-    return NextResponse.json(activities);
+    // Hide in-progress research session scaffolding (no chat acknowledgment)
+    const filtered = (activities || []).filter((a: any) => a.type !== 'research' || !!(a.payload && a.payload.chatAck))
+    return NextResponse.json(filtered);
   } catch (error) {
     console.error('Failed to fetch activities:', error);
     // Return empty array instead of error to prevent UI crash
