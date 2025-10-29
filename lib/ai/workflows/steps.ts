@@ -6,7 +6,7 @@
 import { sql } from '@/lib/db';
 import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
 import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
-import { z } from 'zod';
+import { z } from '@ai-sdk/zod';
 import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
 import { getStepMetadata } from 'workflow';
 
