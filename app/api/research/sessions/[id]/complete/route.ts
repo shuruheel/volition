@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
-import { generateSummary } from '@/lib/ai/agent'
+import { generateSummary } from '@/lib/ai/utils'
 
 interface RouteContext {
   params: Promise<{ id: string }>
