@@ -4,6 +4,8 @@
  */
 
 import { sql } from '@/lib/db';
+import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
+import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
 
 /**
  * Execute a research step: search, scrape, and store content
@@ -178,5 +180,148 @@ export async function completeResearchSessionStep(sessionId: string, summary: st
     SET status = 'completed', payload = ${JSON.stringify(nextPayload)}
     WHERE id = ${sessionId}
   `;
+}
+
+/**
+ * Fetch agent from database
+ */
+export async function fetchAgentStep(agentId: string) {
+  'use step';
+  
+  const agents = await sql<any[]>`SELECT * FROM agents WHERE id = ${agentId}`;
+  return agents[0] || null;
+}
+
+/**
+ * Create a pending activity
+ */
+export async function createPendingActivityStep(
+  agentId: string,
+  type: string,
+  priority: string,
+  payload: any
+) {
+  'use step';
+  
+  const result = await sql<any[]>`
+    INSERT INTO activities (agent_id, type, status, priority, payload)
+    VALUES (${agentId}, ${type}, 'pending', ${priority}, ${JSON.stringify(payload)})
+    RETURNING id
+  `;
+  
+  return result[0]?.id;
+}
+
+/**
+ * Update activity status with additional payload data
+ */
+export async function updateActivityStatusStep(
+  activityId: string,
+  status: string,
+  additionalPayload?: any
+) {
+  'use step';
+  
+  if (additionalPayload) {
+    await sql`
+      UPDATE activities
+      SET status = ${status}, 
+          payload = payload || ${JSON.stringify(additionalPayload)}::jsonb
+      WHERE id = ${activityId}
+    `;
+  } else {
+    await sql`
+      UPDATE activities
+      SET status = ${status}
+      WHERE id = ${activityId}
+    `;
+  }
+}
+
+/**
+ * Update agent status
+ */
+export async function updateAgentDBStatusStep(
+  agentId: string,
+  status: string
+) {
+  'use step';
+  
+  await sql`
+    UPDATE agents
+    SET status = ${status}, updated_at = NOW()
+    WHERE id = ${agentId}
+  `;
+}
+
+/**
+ * Get chat history and context for agent
+ */
+export async function getAgentContextStep(agentId: string, historyLimit: number = 20, contextLimit: number = 5) {
+  'use step';
+  
+  const history = await getLastChatTurns(agentId, historyLimit);
+  const researchContext = await getRecentResearchContext(agentId, contextLimit);
+  const memoryContext = await getRecentMemoriesContext(agentId, contextLimit);
+  const pending = await hasPendingUserInput(agentId);
+  
+  return {
+    history,
+    researchContext,
+    memoryContext,
+    pending,
+  };
+}
+
+/**
+ * Update agent status in database (for real-time UI updates)
+ */
+export async function updateAgentStatusStep(agentId: string, update: {
+  status: 'idle' | 'active' | 'error';
+  currentStep?: number;
+  totalSteps?: number;
+  currentActivity?: string | null;
+  currentTool?: string | null;
+}) {
+  'use step';
+  
+  try {
+    await sql`
+      INSERT INTO agent_status (agent_id, status, current_step, total_steps, current_activity, current_tool)
+      VALUES (
+        ${agentId},
+        ${update.status},
+        ${update.currentStep ?? 0},
+        ${update.totalSteps ?? 0},
+        ${update.currentActivity ?? null},
+        ${update.currentTool ?? null}
+      )
+      ON CONFLICT (agent_id)
+      DO UPDATE SET
+        status = ${update.status},
+        current_step = ${update.currentStep ?? 0},
+        total_steps = ${update.totalSteps ?? 0},
+        current_activity = ${update.currentActivity ?? null},
+        current_tool = ${update.currentTool ?? null},
+        last_update = NOW()
+    `;
+  } catch (error) {
+    console.error('Failed to update agent status:', error);
+  }
+}
+
+/**
+ * Clear agent status (set to idle)
+ */
+export async function clearAgentStatusStep(agentId: string) {
+  'use step';
+  
+  await updateAgentStatusStep(agentId, {
+    status: 'idle',
+    currentStep: 0,
+    totalSteps: 0,
+    currentActivity: null,
+    currentTool: null,
+  });
 }
 

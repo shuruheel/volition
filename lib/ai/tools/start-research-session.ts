@@ -1,3 +1,14 @@
+/**
+ * LEGACY AGENT TOOL - For use with AI SDK generateText() only
+ * 
+ * This tool uses the AI SDK tool() helper and is compatible with generateText().
+ * 
+ * DO NOT import into Vercel Workflows - workflows use inline tool definitions
+ * with 'parameters' key instead of 'inputSchema'.
+ * 
+ * Used by: lib/ai/agent.legacy.ts
+ */
+
 import { tool } from 'ai'
 import { z } from 'zod'
 
@@ -12,7 +23,7 @@ CRITICAL: After calling this tool, you MUST:
 Research is ITERATIVE. Do NOT stop after creating the session. The session is just a container - you must populate it with actual research.
 
 Returns session_id for use in subsequent firecrawlResearch calls.`,
-  parameters: z.object({
+  inputSchema: z.object({
     title: z.string().optional().describe('Brief title for this research session'),
   }),
   execute: async ({ title }, { experimental_context }) => {

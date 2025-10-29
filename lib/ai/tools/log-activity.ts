@@ -1,18 +1,25 @@
+/**
+ * LEGACY AGENT TOOL - For use with AI SDK generateText() only
+ * 
+ * This tool uses the AI SDK tool() helper and is compatible with generateText().
+ * 
+ * DO NOT import into Vercel Workflows - workflows use inline tool definitions
+ * with 'parameters' key instead of 'inputSchema'.
+ * 
+ * Used by: lib/ai/agent.legacy.ts
+ */
+
 import { tool } from 'ai';
 import { z } from 'zod';
 
-/**
- * Log activity tool for AI agents
- * Records agent activities to the database
- */
 export const logActivityTool = tool({
   description: 'Log an activity or milestone completed by the agent',
-  parameters: z.object({
+  inputSchema: z.object({
     type: z.enum(['research', 'email_sent', 'webpage_viewed', 'journal_read']).describe('Type of activity'),
     payload: z.record(z.any()).describe('Activity details and metadata'),
     priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium').describe('Activity priority'),
   }),
-  execute: async ({ type, payload, priority }, { experimental_context }) => {
+  execute: async ({ type, payload }, { experimental_context }) => {
     try {
       // Extract agent_id from context
       const context = experimental_context as { agentId?: string };
@@ -31,7 +38,6 @@ export const logActivityTool = tool({
           agent_id: agentId,
           type,
           status: 'completed',
-          priority,
           payload,
         }),
       });

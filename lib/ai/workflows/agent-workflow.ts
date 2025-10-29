@@ -1,17 +1,19 @@
 /**
  * Main agent workflow using Vercel Workflow for durable, resumable execution
  * Replaces executeAgentTask() with workflow directives
+ * 
+ * IMPORTANT: This workflow defines tools INLINE with 'parameters' key.
+ * DO NOT import tools from lib/ai/tools/ - those use AI SDK tool() helper
+ * which is incompatible with Vercel Workflow tool format.
+ * 
+ * See docs/workflow-vs-legacy-tools.md for detailed explanation.
  */
 
 import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
-import { sql } from '@/lib/db';
-import type { Agent } from '@/lib/db';
-import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
-import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
+import type { Agent } from '@/lib/db-types';
 import { withHITLGuidelines } from '../prompts';
-import { updateAgentStatus, clearAgentStatus } from '@/lib/agent-status';
 import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
 import {
   executeResearchStep,
@@ -20,6 +22,13 @@ import {
   startResearchSessionStep,
   appendToSessionStep,
   completeResearchSessionStep,
+  fetchAgentStep,
+  createPendingActivityStep,
+  updateActivityStatusStep,
+  updateAgentDBStatusStep,
+  getAgentContextStep,
+  updateAgentStatusStep,
+  clearAgentStatusStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -32,18 +41,14 @@ export async function agentTaskWorkflow(
   console.log(`[Workflow] Starting agent ${agentId} with prompt: ${initialPrompt}`);
 
   // Fetch agent configuration
-  const agents = await sql<Agent[]>`SELECT * FROM agents WHERE id = ${agentId}`;
-  const agent = agents[0];
+  const agent = await fetchAgentStep(agentId);
 
   if (!agent) {
     throw new Error(`Agent ${agentId} not found`);
   }
 
   // Build context from database
-  const history = await getLastChatTurns(agentId, 20);
-  const researchContext = await getRecentResearchContext(agentId, 5);
-  const memoryContext = await getRecentMemoriesContext(agentId, 5);
-  const pending = await hasPendingUserInput(agentId);
+  const { history, researchContext, memoryContext, pending } = await getAgentContextStep(agentId, 20, 5);
 
   // Build system prompt with HITL guidelines
   let systemPrompt = withHITLGuidelines(agent.prompt);
@@ -57,7 +62,7 @@ export async function agentTaskWorkflow(
   let researchStarted = false;
 
   // Initialize agent status
-  await updateAgentStatus(agentId, {
+  await updateAgentStatusStep(agentId, {
     status: 'active',
     currentStep: 0,
     totalSteps: maxSteps,
@@ -69,7 +74,7 @@ export async function agentTaskWorkflow(
     while (currentStep < maxSteps) {
       console.log(`[Workflow] Step ${currentStep + 1}/${maxSteps}`);
 
-      await updateAgentStatus(agentId, {
+      await updateAgentStatusStep(agentId, {
         status: 'active',
         currentStep: currentStep + 1,
         totalSteps: maxSteps,
@@ -184,14 +189,14 @@ export async function agentTaskWorkflow(
               console.log(`[Workflow] Asking user: ${question}`);
               
               // Create pending activity
-              const result = await sql<any[]>`
-                INSERT INTO activities (agent_id, type, status, priority, payload)
-                VALUES (${agentId}, 'user_input', 'pending', ${priority}, ${JSON.stringify({ question })})
-                RETURNING id
-              `;
-              const activityId = result[0].id;
+              const activityId = await createPendingActivityStep(
+                agentId,
+                'user_input',
+                priority,
+                { question }
+              );
 
-              await updateAgentStatus(agentId, {
+              await updateAgentStatusStep(agentId, {
                 status: 'active',
                 currentActivity: 'Waiting for user input',
                 currentTool: 'askUser',
@@ -205,12 +210,11 @@ export async function agentTaskWorkflow(
                 console.log(`[Workflow] Received user answer: ${event.answer}`);
                 
                 // Update activity with answer
-                await sql`
-                  UPDATE activities
-                  SET status = 'approved', 
-                      payload = payload || ${JSON.stringify({ answer: event.answer })}::jsonb
-                  WHERE id = ${event.activityId}
-                `;
+                await updateActivityStatusStep(
+                  event.activityId,
+                  'approved',
+                  { answer: event.answer }
+                );
 
                 // Return answer to LLM
                 return {
@@ -235,12 +239,12 @@ export async function agentTaskWorkflow(
             execute: async ({ type, payload, priority }) => {
               console.log(`[Workflow] Creating pending ${type}`);
               
-              const result = await sql<any[]>`
-                INSERT INTO activities (agent_id, type, status, priority, payload)
-                VALUES (${agentId}, ${type}, 'pending', ${priority}, ${JSON.stringify(payload)})
-                RETURNING id
-              `;
-              const activityId = result[0].id;
+              const activityId = await createPendingActivityStep(
+                agentId,
+                type,
+                priority,
+                payload
+              );
 
               // Pause and wait for approval
               const token = `agent-${agentId}-activity-${activityId}`;
@@ -255,11 +259,10 @@ export async function agentTaskWorkflow(
               for await (const event of events) {
                 console.log(`[Workflow] Activity ${type} ${event.approved ? 'approved' : 'rejected'}`);
                 
-                await sql`
-                  UPDATE activities
-                  SET status = ${event.approved ? 'approved' : 'rejected'}
-                  WHERE id = ${activityId}
-                `;
+                await updateActivityStatusStep(
+                  activityId,
+                  event.approved ? 'approved' : 'rejected'
+                );
 
                 return {
                   success: true,
@@ -311,12 +314,8 @@ export async function agentTaskWorkflow(
     console.log(`[Workflow] Completed after ${currentStep} steps`);
 
     // Mark agent as idle
-    await clearAgentStatus(agentId);
-    await sql`
-      UPDATE agents
-      SET status = 'idle', updated_at = NOW()
-      WHERE id = ${agentId}
-    `;
+    await clearAgentStatusStep(agentId);
+    await updateAgentDBStatusStep(agentId, 'idle');
 
     // Log completion
     await logActivityStep(agentId, 'task_completed', {
@@ -334,15 +333,11 @@ export async function agentTaskWorkflow(
     console.error('[Workflow] Error:', error);
 
     // Mark agent as error
-    await updateAgentStatus(agentId, {
+    await updateAgentStatusStep(agentId, {
       status: 'error',
       currentActivity: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
     });
-    await sql`
-      UPDATE agents
-      SET status = 'error', updated_at = NOW()
-      WHERE id = ${agentId}
-    `;
+    await updateAgentDBStatusStep(agentId, 'error');
 
     throw error;
   }

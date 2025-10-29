@@ -1,3 +1,14 @@
+/**
+ * LEGACY AGENT TOOL - For use with AI SDK generateText() only
+ * 
+ * This tool uses the AI SDK tool() helper and is compatible with generateText().
+ * 
+ * DO NOT import into Vercel Workflows - workflows use inline tool definitions
+ * with 'parameters' key instead of 'inputSchema'.
+ * 
+ * Used by: lib/ai/agent.legacy.ts
+ */
+
 import { tool } from 'ai'
 import { z } from 'zod'
 
@@ -16,7 +27,7 @@ The summary should:
 - Answer the original research question comprehensively
 
 Do NOT call this immediately after startResearchSession - you must do actual research first!`,
-  parameters: z.object({
+  inputSchema: z.object({
     session_id: z.string().describe('Session ID from startResearchSession'),
     summary: z.string().optional().describe('Final markdown summary synthesizing all findings'),
   }),

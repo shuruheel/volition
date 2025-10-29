@@ -1,3 +1,16 @@
+/**
+ * LEGACY AGENT TOOL - For use with AI SDK generateText() only
+ * 
+ * This tool uses the AI SDK tool() helper and is compatible with generateText().
+ * It also imports Node.js modules (firecrawl, supermemory) that cannot be used
+ * in Vercel Workflow sandboxed environments.
+ * 
+ * DO NOT import into Vercel Workflows - workflows use inline tool definitions
+ * with 'parameters' key and delegate logic to step functions.
+ * 
+ * Used by: lib/ai/agent.legacy.ts
+ */
+
 import { tool, generateText } from 'ai'
 import { openai } from '@ai-sdk/openai'
 import { z } from 'zod'
@@ -23,7 +36,7 @@ Session linking:
 - session_id is automatically detected from the active research session
 - You can also provide session_id explicitly if needed
 - If no session is active, research is still saved but not grouped`,
-  parameters: z.object({
+  inputSchema: z.object({
     query: z.string().min(2).max(400).describe('Focused search query'),
     limit: z.number().int().min(1).max(3).default(3).describe('Number of results to scrape (1-3)'),
     sources: z.array(z.enum(['web', 'news', 'images'])).optional().describe('Source types to search'),

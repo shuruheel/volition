@@ -1,14 +1,24 @@
+/**
+ * LEGACY AGENT TOOL - For use with AI SDK generateText() only
+ * 
+ * This tool uses the AI SDK tool() helper and is compatible with generateText().
+ * 
+ * DO NOT import into Vercel Workflows - workflows use inline tool definitions
+ * with 'parameters' key instead of 'inputSchema'.
+ * 
+ * Planner tool: The model must call this after each action to decide the next step.
+ * It enforces a structured loop and clear stopping criteria.
+ * 
+ * Used by: lib/ai/agent.legacy.ts
+ */
+
 import { tool } from 'ai'
 import { z } from 'zod'
 
-/**
- * Planner tool: The model must call this after each action to decide the next step.
- * It enforces a structured loop and clear stopping criteria.
- */
 export const planNextStepTool = tool({
   description:
     'Plan the next step in an iterative research workflow. Always call this after each action. Choose among: "startResearchSession" to open a session; "firecrawlResearch" to search+scrape top 3; "completeResearchSession" to finalize; "browserTask" for interactive actions; "askUser" for clarification; or "stop" when finished.',
-  parameters: z.object({
+  inputSchema: z.object({
     nextAction: z.enum(['startResearchSession', 'firecrawlResearch', 'completeResearchSession', 'browserTask', 'askUser', 'stop']).describe('What to do next'),
     task: z
       .string()
