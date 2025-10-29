@@ -72,16 +72,17 @@ export async function agentTaskWorkflow(
       });
 
       // Execute one LLM decision inside a step (tools are defined in the step)
+      // Ensure all arguments are serializable
       const result = await executeLLMDecisionStep({
-        agentId,
-        systemPrompt,
-        history,
-        researchContext,
-        memoryContext,
-        userPrompt: initialPrompt,
-        enabledTools: agent.tools,
-        currentSessionId,
-        researchStarted,
+        agentId: String(agentId),
+        systemPrompt: String(systemPrompt),
+        history: history,
+        researchContext: researchContext || null,
+        memoryContext: memoryContext || null,
+        userPrompt: String(initialPrompt),
+        enabledTools: Array.isArray(agent.tools) ? [...agent.tools] : [],
+        currentSessionId: currentSessionId || null,
+        researchStarted: Boolean(researchStarted),
       });
 
       // Check finish reason

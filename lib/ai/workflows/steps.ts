@@ -271,8 +271,14 @@ export async function getAgentContextStep(agentId: string, historyLimit: number 
   const memoryContext = await getRecentMemoriesContext(agentId, contextLimit);
   const pending = await hasPendingUserInput(agentId);
   
+  // Ensure history is fully serializable (map to plain objects)
+  const serializedHistory = history.map((msg: any) => ({
+    role: msg.role,
+    content: msg.content,
+  }));
+  
   return {
-    history,
+    history: serializedHistory,
     researchContext,
     memoryContext,
     pending,
