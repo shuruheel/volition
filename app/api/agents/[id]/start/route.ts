@@ -80,7 +80,8 @@ export async function POST(
       currentActivity: 'Starting workflow...',
     });
     
-    const prompt = task || 'Continue with your assigned tasks based on your system prompt.';
+    // Default prompt should be directive and actionable
+    const prompt = task || 'Begin working on your assigned responsibilities. Use the available tools to complete tasks according to your role and instructions.';
     
     console.log(`[Agent Start] Invoking workflow for agent ${id}`);
     
