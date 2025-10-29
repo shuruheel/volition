@@ -332,7 +332,7 @@ export async function clearAgentStatusStep(agentId: string) {
 }
 
 /**
- * Execute one LLM decision cycle with tools defined inside the step context.
+ * Execute one LLM decision cycle using raw OpenAI API (bypassing AI SDK tool wrappers).
  * Returns serializable state deltas and finish reason.
  */
 export async function executeLLMDecisionStep(args: {
@@ -351,168 +351,207 @@ export async function executeLLMDecisionStep(args: {
   const { agentId, systemPrompt, history, researchContext, memoryContext, userPrompt } = args;
   let { currentSessionId, researchStarted } = args;
 
-  // Import AI SDK within step context
-  const { generateText } = await import('ai');
-  const { openai } = await import('@ai-sdk/openai');
-  const { tool } = await import('ai');
-
-  // Define tools using the AI SDK tool() helper for proper schema handling
-  const startResearchSession = tool({
-    description: 'Start a new research session and initialize tracking',
-    parameters: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: 'Title for the research session' },
-      },
-      required: ['title'],
-      additionalProperties: false,
-    },
-    execute: async ({ title }: { title: string }) => {
-      const result = await startResearchSessionStep(agentId, title);
-      currentSessionId = result.session_id;
-      researchStarted = false;
-      return { session_id: currentSessionId };
-    },
+  // Use raw OpenAI SDK to avoid AI SDK serialization issues
+  const { default: OpenAI } = await import('openai');
+  
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
   });
 
-  const firecrawlResearch = tool({
-    description: 'Search and scrape the web; call multiple times with focused queries',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string' },
-        limit: { type: 'integer', minimum: 1, maximum: 3, default: 3 },
-      },
-      required: ['query'],
-      additionalProperties: false,
-    },
-    execute: async ({ query, limit }: { query: string; limit: number }) => {
-      if (!currentSessionId) return { success: false, error: 'No active session' };
-      researchStarted = true;
-      const result = await executeResearchStep(agentId, query, currentSessionId);
-      const links = result.leads.map((l: any) => l.url);
-      const notes = result.leads.map((l: any) => `${l.title}: ${l.url}`);
-      await appendToSessionStep(currentSessionId, query, links, notes);
-      return { success: true, itemsScraped: result.itemsScraped, session_id: currentSessionId };
-    },
-  });
-
-  const completeResearchSession = tool({
-    description: 'Finalize a research session with a summary',
-    parameters: {
-      type: 'object',
-      properties: {
-        summary: { type: 'string' },
-      },
-      required: ['summary'],
-      additionalProperties: false,
-    },
-    execute: async ({ summary }: { summary: string }) => {
-      if (!currentSessionId) return { success: false, error: 'No active session' };
-      await completeResearchSessionStep(currentSessionId, summary);
-      const completed = currentSessionId;
-      currentSessionId = null;
-      researchStarted = false;
-      return { success: true, session_id: completed };
-    },
-  });
-
-  const logActivity = tool({
-    description: 'Log a completed activity to the database',
-    parameters: {
-      type: 'object',
-      properties: {
-        type: { type: 'string' },
-        payload: { type: 'object', additionalProperties: true },
-      },
-      required: ['type', 'payload'],
-      additionalProperties: false,
-    },
-    execute: async ({ type, payload }: { type: string; payload: any }) => {
-      await logActivityStep(agentId, type, payload);
-      return { success: true };
-    },
-  });
-
-  const askUser = tool({
-    description: 'Ask the user a question; pause until answered',
-    parameters: {
-      type: 'object',
-      properties: {
-        question: { type: 'string' },
-        priority: { type: 'string', enum: ['low', 'medium', 'high'], default: 'medium' },
-      },
-      required: ['question'],
-      additionalProperties: false,
-    },
-    execute: async ({ question, priority }: { question: string; priority: 'low' | 'medium' | 'high' }) => {
-      const activityId = await createPendingActivityStep(
-        agentId,
-        'user_input',
-        priority,
-        { question }
-      );
-
-      await updateAgentStatusStep(agentId, {
-        status: 'active',
-        currentActivity: 'Waiting for user input',
-        currentTool: 'askUser',
-      });
-
-      const token = `agent-${agentId}-activity-${activityId}`;
-      const events = userInputHook.create({ token });
-
-      for await (const event of events) {
-        await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
-        return { success: true, answer: event.answer };
-      }
-      return { success: false, error: 'No response received' };
-    },
-  });
-
-  const tools: Record<string, any> = {
-    startResearchSession,
-    firecrawlResearch,
-    completeResearchSession,
-    logActivity,
-    askUser,
-  };
-
-  // Conditionally include browser tool
-  if (args.enabledTools.includes('browser')) {
-    tools.browserTask = tool({
-      description: 'Execute browser automation tasks',
-      parameters: {
-        type: 'object',
-        properties: {
-          task: { type: 'string' },
-          maxSteps: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+  // Define tools in raw OpenAI format (JSON Schema)
+  const tools: Array<any> = [
+    {
+      type: 'function',
+      function: {
+        name: 'startResearchSession',
+        description: 'Start a new research session and initialize tracking',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Title for the research session' },
+          },
+          required: ['title'],
+          additionalProperties: false,
         },
-        required: ['task'],
-        additionalProperties: false,
       },
-      execute: async ({ task, maxSteps }: { task: string; maxSteps: number }) => {
-        return await executeBrowserStep(agentId, task, maxSteps);
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'firecrawlResearch',
+        description: 'Search and scrape the web; call multiple times with focused queries',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+            limit: { type: 'integer', minimum: 1, maximum: 3, default: 3 },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'completeResearchSession',
+        description: 'Finalize a research session with a summary',
+        parameters: {
+          type: 'object',
+          properties: {
+            summary: { type: 'string' },
+          },
+          required: ['summary'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'logActivity',
+        description: 'Log a completed activity to the database',
+        parameters: {
+          type: 'object',
+          properties: {
+            type: { type: 'string' },
+            payload: { type: 'object', additionalProperties: true },
+          },
+          required: ['type', 'payload'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'askUser',
+        description: 'Ask the user a question; pause until answered',
+        parameters: {
+          type: 'object',
+          properties: {
+            question: { type: 'string' },
+            priority: { type: 'string', enum: ['low', 'medium', 'high'], default: 'medium' },
+          },
+          required: ['question'],
+          additionalProperties: false,
+        },
+      },
+    },
+  ];
+
+  // Conditionally add browser tool
+  if (args.enabledTools.includes('browser')) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'browserTask',
+        description: 'Execute browser automation tasks',
+        parameters: {
+          type: 'object',
+          properties: {
+            task: { type: 'string' },
+            maxSteps: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+          },
+          required: ['task'],
+          additionalProperties: false,
+        },
       },
     });
   }
 
-  const result = await generateText({
-    model: openai('gpt-5-2025-08-07'),
-    system: systemPrompt,
-    messages: [
-      ...history,
-      ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
-      ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
-      { role: 'user', content: userPrompt },
-    ],
+  // Build messages array
+  const messages: Array<any> = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+  ];
+  
+  if (researchContext) {
+    messages.push({ role: 'user', content: researchContext });
+  }
+  if (memoryContext) {
+    messages.push({ role: 'user', content: memoryContext });
+  }
+  messages.push({ role: 'user', content: userPrompt });
+
+  // Call OpenAI API directly
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages,
     tools,
-    maxSteps: 1,
+    tool_choice: 'auto',
   });
 
-  // Extract only serializable data from result
+  const message = completion.choices[0]?.message;
+  
+  // Execute tool calls if any
+  if (message?.tool_calls && message.tool_calls.length > 0) {
+    for (const toolCall of message.tool_calls) {
+      const functionName = toolCall.function.name;
+      const args = JSON.parse(toolCall.function.arguments);
+
+      // Execute the appropriate tool
+      switch (functionName) {
+        case 'startResearchSession': {
+          const result = await startResearchSessionStep(agentId, args.title);
+          currentSessionId = result.session_id;
+          researchStarted = false;
+          break;
+        }
+        case 'firecrawlResearch': {
+          if (!currentSessionId) break;
+          researchStarted = true;
+          const result = await executeResearchStep(agentId, args.query, currentSessionId);
+          const links = result.leads.map((l: any) => l.url);
+          const notes = result.leads.map((l: any) => `${l.title}: ${l.url}`);
+          await appendToSessionStep(currentSessionId, args.query, links, notes);
+          break;
+        }
+        case 'completeResearchSession': {
+          if (!currentSessionId) break;
+          await completeResearchSessionStep(currentSessionId, args.summary);
+          currentSessionId = null;
+          researchStarted = false;
+          break;
+        }
+        case 'logActivity': {
+          await logActivityStep(agentId, args.type, args.payload);
+          break;
+        }
+        case 'askUser': {
+          const activityId = await createPendingActivityStep(
+            agentId,
+            'user_input',
+            args.priority || 'medium',
+            { question: args.question }
+          );
+
+          await updateAgentStatusStep(agentId, {
+            status: 'active',
+            currentActivity: 'Waiting for user input',
+            currentTool: 'askUser',
+          });
+
+          const token = `agent-${agentId}-activity-${activityId}`;
+          const events = userInputHook.create({ token });
+
+          for await (const event of events) {
+            await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
+            break; // Exit after first response
+          }
+          break;
+        }
+        case 'browserTask': {
+          await executeBrowserStep(agentId, args.task, args.maxSteps || 10);
+          break;
+        }
+      }
+    }
+  }
+
+  // Return serializable data only
   return {
-    finishReason: String(result.finishReason),
+    finishReason: message?.finish_reason || 'stop',
     currentSessionId,
     researchStarted,
   };
