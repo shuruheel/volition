@@ -16,7 +16,7 @@ The summary should:
 - Answer the original research question comprehensively
 
 Do NOT call this immediately after startResearchSession - you must do actual research first!`,
-  inputSchema: z.object({
+  parameters: z.object({
     session_id: z.string().describe('Session ID from startResearchSession'),
     summary: z.string().optional().describe('Final markdown summary synthesizing all findings'),
   }),

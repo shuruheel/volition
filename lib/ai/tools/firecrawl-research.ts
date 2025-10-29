@@ -23,7 +23,7 @@ Session linking:
 - session_id is automatically detected from the active research session
 - You can also provide session_id explicitly if needed
 - If no session is active, research is still saved but not grouped`,
-  inputSchema: z.object({
+  parameters: z.object({
     query: z.string().min(2).max(400).describe('Focused search query'),
     limit: z.number().int().min(1).max(3).default(3).describe('Number of results to scrape (1-3)'),
     sources: z.array(z.enum(['web', 'news', 'images'])).optional().describe('Source types to search'),

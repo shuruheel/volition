@@ -8,7 +8,7 @@ import { z } from 'zod'
 export const planNextStepTool = tool({
   description:
     'Plan the next step in an iterative research workflow. Always call this after each action. Choose among: "startResearchSession" to open a session; "firecrawlResearch" to search+scrape top 3; "completeResearchSession" to finalize; "browserTask" for interactive actions; "askUser" for clarification; or "stop" when finished.',
-  inputSchema: z.object({
+  parameters: z.object({
     nextAction: z.enum(['startResearchSession', 'firecrawlResearch', 'completeResearchSession', 'browserTask', 'askUser', 'stop']).describe('What to do next'),
     task: z
       .string()

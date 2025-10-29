@@ -7,12 +7,12 @@ import { z } from 'zod';
  */
 export const logActivityTool = tool({
   description: 'Log an activity or milestone completed by the agent',
-  inputSchema: z.object({
+  parameters: z.object({
     type: z.enum(['research', 'email_sent', 'webpage_viewed', 'journal_read']).describe('Type of activity'),
     payload: z.record(z.any()).describe('Activity details and metadata'),
     priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium').describe('Activity priority'),
   }),
-  execute: async ({ type, payload }, { experimental_context }) => {
+  execute: async ({ type, payload, priority }, { experimental_context }) => {
     try {
       // Extract agent_id from context
       const context = experimental_context as { agentId?: string };
@@ -31,6 +31,7 @@ export const logActivityTool = tool({
           agent_id: agentId,
           type,
           status: 'completed',
+          priority,
           payload,
         }),
       });

@@ -12,7 +12,7 @@ CRITICAL: After calling this tool, you MUST:
 Research is ITERATIVE. Do NOT stop after creating the session. The session is just a container - you must populate it with actual research.
 
 Returns session_id for use in subsequent firecrawlResearch calls.`,
-  inputSchema: z.object({
+  parameters: z.object({
     title: z.string().optional().describe('Brief title for this research session'),
   }),
   execute: async ({ title }, { experimental_context }) => {
