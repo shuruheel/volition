@@ -354,14 +354,18 @@ export async function executeLLMDecisionStep(args: {
   // Import AI SDK within step context
   const { generateText, stepCountIs } = await import('ai');
   const { openai } = await import('@ai-sdk/openai');
-  const { z } = await import('zod');
 
   const tools: Record<string, any> = {
     startResearchSession: {
       description: 'Start a new research session and initialize tracking',
-      inputSchema: z.object({
-        title: z.string().describe('Title for the research session'),
-      }),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Title for the research session' },
+        },
+        required: ['title'],
+        additionalProperties: false,
+      },
       execute: async ({ title }: { title: string }) => {
         const result = await startResearchSessionStep(agentId, title);
         currentSessionId = result.session_id;
@@ -371,10 +375,15 @@ export async function executeLLMDecisionStep(args: {
     },
     firecrawlResearch: {
       description: 'Search and scrape the web; call multiple times with focused queries',
-      inputSchema: z.object({
-        query: z.string(),
-        limit: z.number().int().min(1).max(3).default(3),
-      }),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: 3, default: 3 },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
       execute: async ({ query, limit }: { query: string; limit: number }) => {
         if (!currentSessionId) return { success: false, error: 'No active session' };
         researchStarted = true;
@@ -387,9 +396,14 @@ export async function executeLLMDecisionStep(args: {
     },
     completeResearchSession: {
       description: 'Finalize a research session with a summary',
-      inputSchema: z.object({
-        summary: z.string(),
-      }),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+        },
+        required: ['summary'],
+        additionalProperties: false,
+      },
       execute: async ({ summary }: { summary: string }) => {
         if (!currentSessionId) return { success: false, error: 'No active session' };
         await completeResearchSessionStep(currentSessionId, summary);
@@ -401,10 +415,15 @@ export async function executeLLMDecisionStep(args: {
     },
     logActivity: {
       description: 'Log a completed activity to the database',
-      inputSchema: z.object({
-        type: z.string(),
-        payload: z.record(z.any()),
-      }),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: { type: 'string' },
+          payload: { type: 'object', additionalProperties: true },
+        },
+        required: ['type', 'payload'],
+        additionalProperties: false,
+      },
       execute: async ({ type, payload }: { type: string; payload: any }) => {
         await logActivityStep(agentId, type, payload);
         return { success: true };
@@ -412,10 +431,15 @@ export async function executeLLMDecisionStep(args: {
     },
     askUser: {
       description: 'Ask the user a question; pause until answered',
-      inputSchema: z.object({
-        question: z.string(),
-        priority: z.enum(['low', 'medium', 'high']).default('medium'),
-      }),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          priority: { type: 'string', enum: ['low', 'medium', 'high'], default: 'medium' },
+        },
+        required: ['question'],
+        additionalProperties: false,
+      },
       execute: async ({ question, priority }: { question: string; priority: 'low' | 'medium' | 'high' }) => {
         const activityId = await createPendingActivityStep(
           agentId,
@@ -446,10 +470,15 @@ export async function executeLLMDecisionStep(args: {
   if (args.enabledTools.includes('browser')) {
     tools.browserTask = {
       description: 'Execute browser automation tasks',
-      inputSchema: z.object({
-        task: z.string(),
-        maxSteps: z.number().min(1).max(20).default(10),
-      }),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          task: { type: 'string' },
+          maxSteps: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+        },
+        required: ['task'],
+        additionalProperties: false,
+      },
       execute: async ({ task, maxSteps }: { task: string; maxSteps: number }) => {
         return await executeBrowserStep(agentId, task, maxSteps);
       },
