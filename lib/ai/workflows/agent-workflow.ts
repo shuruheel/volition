@@ -28,7 +28,6 @@ import {
   getAgentContextStep,
   updateAgentStatusStep,
   clearAgentStatusStep,
-  generateTextStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -280,8 +279,10 @@ export async function agentTaskWorkflow(
           },
         };
 
-      // Call LLM via step function (required for Vercel Workflow compatibility)
-      const result = await generateTextStep({
+      // Dynamically import AI SDK within the workflow to avoid bundling issues
+      const { generateText } = await import('ai');
+
+      const result = await generateText({
         model: openai('gpt-5-2025-08-07'),
         system: systemPrompt,
         messages: [
