@@ -91,8 +91,8 @@ export async function agentTaskWorkflow(
           startResearchSession: {
             description: 'STEP 1 of research workflow. Start a new research session with a title. After calling this, you MUST call firecrawlResearch multiple times.',
             parameters: z.object({
-              title: z.string().describe('Title for the research session'),
-            }),
+              title: z.string(),
+            }).describe('Start a new research session'),
             execute: async ({ title }) => {
               const result = await startResearchSessionStep(agentId, title);
               currentSessionId = result.session_id;
@@ -105,9 +105,9 @@ export async function agentTaskWorkflow(
           firecrawlResearch: {
             description: 'STEP 2+ of research workflow. Search and scrape web content. Call this 3-5 times per session with different queries.',
             parameters: z.object({
-              query: z.string().describe('Focused search query'),
-              limit: z.number().int().min(1).max(3).default(3).describe('Number of results to scrape'),
-            }),
+              query: z.string(),
+              limit: z.number().int().min(1).max(3).default(3),
+            }).describe('Research query and limit'),
             execute: async ({ query, limit }) => {
               if (!currentSessionId) {
                 return { success: false, error: 'No active session. Call startResearchSession first.' };
@@ -134,8 +134,8 @@ export async function agentTaskWorkflow(
           completeResearchSession: {
             description: 'FINAL STEP of research. Complete and finalize the research session with a summary.',
             parameters: z.object({
-              summary: z.string().describe('Comprehensive summary of all research findings'),
-            }),
+              summary: z.string(),
+            }).describe('Summary of research findings'),
             execute: async ({ summary }) => {
               if (!currentSessionId) {
                 return { success: false, error: 'No active session to complete' };
@@ -162,9 +162,9 @@ export async function agentTaskWorkflow(
                 browserTask: {
                   description: 'Execute browser automation for interactive tasks (logins, forms, clicks)',
                   parameters: z.object({
-                    task: z.string().describe('Natural language description of browser task'),
+                    task: z.string(),
                     maxSteps: z.number().min(1).max(20).default(10),
-                  }),
+                  }).describe('Browser task and max steps'),
                   execute: async ({ task, maxSteps }) => {
                     console.log(`[Workflow] Browser task: ${task}`);
                     return await executeBrowserStep(agentId, task, maxSteps);
@@ -177,9 +177,9 @@ export async function agentTaskWorkflow(
           askUser: {
             description: 'Ask the user a question when you need clarification. Workflow pauses until user responds.',
             parameters: z.object({
-              question: z.string().describe('The question to ask'),
+              question: z.string(),
               priority: z.enum(['low', 'medium', 'high']).default('medium'),
-            }),
+            }).describe('Question and priority'),
             execute: async ({ question, priority }) => {
               console.log(`[Workflow] Asking user: ${question}`);
               
@@ -229,9 +229,9 @@ export async function agentTaskWorkflow(
             description: 'Create a pending activity that requires approval (e.g., phone call, email)',
             parameters: z.object({
               type: z.enum(['phone_call', 'email_sent', 'calendar_event_created']),
-              payload: z.record(z.any()).describe('Activity data'),
+              payload: z.record(z.any()),
               priority: z.enum(['low', 'medium', 'high']).default('medium'),
-            }),
+            }).describe('Activity type, payload, and priority'),
             execute: async ({ type, payload, priority }) => {
               console.log(`[Workflow] Creating pending ${type}`);
               
