@@ -6,7 +6,6 @@
 import { sql } from '@/lib/db';
 import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
 import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
-import { z } from '@ai-sdk/zod';
 import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
 import { getStepMetadata } from 'workflow';
 
@@ -355,6 +354,7 @@ export async function executeLLMDecisionStep(args: {
   // Import AI SDK within step context
   const { generateText, stepCountIs } = await import('ai');
   const { openai } = await import('@ai-sdk/openai');
+  const { z } = await import('zod');
 
   const tools: Record<string, any> = {
     startResearchSession: {
