@@ -28,7 +28,6 @@ import {
   getAgentContextStep,
   updateAgentStatusStep,
   clearAgentStatusStep,
-  generateTextStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -82,7 +81,9 @@ export async function agentTaskWorkflow(
       });
 
       // Call LLM to decide next action
-      const result = await generateTextStep({
+      // Dynamic import to avoid workflow sandbox global issues
+      const { generateText, stepCountIs } = await import('ai');
+      const result = await generateText({
         model: openai('gpt-5-2025-08-07'),
         system: systemPrompt,
         messages: [
@@ -95,7 +96,7 @@ export async function agentTaskWorkflow(
           // Research tools
           startResearchSession: {
             description: 'STEP 1 of research workflow. Start a new research session with a title. After calling this, you MUST call firecrawlResearch multiple times.',
-            parameters: z.object({
+            inputSchema: z.object({
               title: z.string().describe('Title for the research session'),
             }),
             execute: async ({ title }) => {
@@ -109,7 +110,7 @@ export async function agentTaskWorkflow(
 
           firecrawlResearch: {
             description: 'STEP 2+ of research workflow. Search and scrape web content. Call this 3-5 times per session with different queries.',
-            parameters: z.object({
+            inputSchema: z.object({
               query: z.string().describe('Focused search query'),
               limit: z.number().int().min(1).max(3).default(3).describe('Number of results to scrape'),
             }),
@@ -138,7 +139,7 @@ export async function agentTaskWorkflow(
 
           completeResearchSession: {
             description: 'FINAL STEP of research. Complete and finalize the research session with a summary.',
-            parameters: z.object({
+            inputSchema: z.object({
               summary: z.string().describe('Comprehensive summary of all research findings'),
             }),
             execute: async ({ summary }) => {
@@ -166,7 +167,7 @@ export async function agentTaskWorkflow(
             ? {
                 browserTask: {
                   description: 'Execute browser automation for interactive tasks (logins, forms, clicks)',
-                  parameters: z.object({
+                  inputSchema: z.object({
                     task: z.string().describe('Natural language description of browser task'),
                     maxSteps: z.number().min(1).max(20).default(10),
                   }),
@@ -181,7 +182,7 @@ export async function agentTaskWorkflow(
           // Human-in-the-loop tools
           askUser: {
             description: 'Ask the user a question when you need clarification. Workflow pauses until user responds.',
-            parameters: z.object({
+            inputSchema: z.object({
               question: z.string().describe('The question to ask'),
               priority: z.enum(['low', 'medium', 'high']).default('medium'),
             }),
@@ -231,7 +232,7 @@ export async function agentTaskWorkflow(
 
           createPendingActivity: {
             description: 'Create a pending activity that requires approval (e.g., phone call, email)',
-            parameters: z.object({
+            inputSchema: z.object({
               type: z.enum(['phone_call', 'email_sent', 'calendar_event_created']),
               payload: z.record(z.any()).describe('Activity data'),
               priority: z.enum(['low', 'medium', 'high']).default('medium'),
@@ -278,7 +279,7 @@ export async function agentTaskWorkflow(
 
           logActivity: {
             description: 'Log a completed activity to the database',
-            parameters: z.object({
+            inputSchema: z.object({
               type: z.string().describe('Activity type'),
               payload: z.record(z.any()).describe('Activity data'),
             }),
@@ -288,7 +289,7 @@ export async function agentTaskWorkflow(
             },
           },
         },
-        maxSteps: 1, // One LLM call per workflow step
+        stopWhen: stepCountIs(1), // One LLM call per workflow step
       });
 
       // Check finish reason
