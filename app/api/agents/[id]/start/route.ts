@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
 import { updateAgentStatus } from '@/lib/agent-status';
+import { agentTaskWorkflow } from '@/lib/ai/workflows/agent-workflow';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -57,21 +58,13 @@ export async function POST(
       currentActivity: 'Starting workflow...',
     });
     
-    // Start workflow (Vercel Workflow handles background execution)
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const prompt = task || 'Continue with your assigned tasks based on your system prompt.';
     
     console.log(`[Agent Start] Invoking workflow for agent ${id}`);
     
-    // Invoke workflow endpoint (async, returns immediately)
-    fetch(`${baseUrl}/api/workflows/agent/${id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        maxSteps: 40,
-      }),
-    }).catch(error => {
+    // Start workflow directly (Vercel Workflow handles background execution)
+    // DO NOT use fetch() to call our own API - this is an anti-pattern
+    agentTaskWorkflow(id, prompt, 40).catch(error => {
       console.error('[Agent Start] Failed to start workflow:', error);
       // Update status to error
       sql`

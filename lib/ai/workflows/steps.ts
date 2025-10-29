@@ -102,19 +102,22 @@ export async function logActivityStep(
 export async function startResearchSessionStep(agentId: string, title: string) {
   'use step';
   
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const resp = await fetch(`${baseUrl}/api/research/sessions/start`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, title }),
-  });
-  
-  if (!resp.ok) {
-    throw new Error('Failed to start research session');
-  }
-  
-  const data = await resp.json();
-  return { session_id: data.session_id };
+  const payload = {
+    title,
+    queries: [] as string[],
+    links: [] as string[],
+    notes: [] as string[],
+    source: 'firecrawl',
+  };
+
+  const rows = await sql<any[]>`
+    INSERT INTO activities (agent_id, type, status, priority, payload)
+    VALUES (${agentId}, 'research', 'approved', 'medium', ${JSON.stringify(payload)})
+    RETURNING id
+  `;
+
+  const id = rows[0]?.id as string;
+  return { session_id: id };
 }
 
 /**
@@ -128,12 +131,29 @@ export async function appendToSessionStep(
 ) {
   'use step';
   
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  await fetch(`${baseUrl}/api/research/sessions/${sessionId}/append`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, links, notes }),
-  });
+  const [row] = await sql<any[]>`
+    SELECT payload FROM activities WHERE id = ${sessionId}
+  `;
+  
+  if (!row) {
+    throw new Error('Session not found');
+  }
+
+  const payload = (row.payload ?? {}) as Record<string, any>;
+  const existingQueries: string[] = Array.isArray(payload.queries) ? payload.queries : [];
+  const existingLinks: string[] = Array.isArray(payload.links) ? payload.links : [];
+  const existingNotes: string[] = Array.isArray(payload.notes) ? payload.notes : [];
+
+  const nextPayload = {
+    ...payload,
+    queries: query ? [...existingQueries, query] : existingQueries,
+    links: Array.from(new Set([...existingLinks, ...links])).slice(0, 1000),
+    notes: [...existingNotes, ...notes].slice(0, 500),
+  };
+
+  await sql`
+    UPDATE activities SET payload = ${JSON.stringify(nextPayload)} WHERE id = ${sessionId}
+  `;
 }
 
 /**
@@ -142,11 +162,21 @@ export async function appendToSessionStep(
 export async function completeResearchSessionStep(sessionId: string, summary: string) {
   'use step';
   
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  await fetch(`${baseUrl}/api/research/sessions/${sessionId}/complete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ summary }),
-  });
+  const [row] = await sql<any[]>`
+    SELECT payload FROM activities WHERE id = ${sessionId}
+  `;
+  
+  if (!row) {
+    throw new Error('Session not found');
+  }
+
+  const payload = (row.payload ?? {}) as Record<string, any>;
+  const nextPayload = { ...payload, summary };
+
+  await sql`
+    UPDATE activities
+    SET status = 'completed', payload = ${JSON.stringify(nextPayload)}
+    WHERE id = ${sessionId}
+  `;
 }
 
