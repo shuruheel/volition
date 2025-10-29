@@ -358,7 +358,7 @@ export async function executeLLMDecisionStep(args: {
   const tools: Record<string, any> = {
     startResearchSession: {
       description: 'Start a new research session and initialize tracking',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           title: { type: 'string', description: 'Title for the research session' },
@@ -375,7 +375,7 @@ export async function executeLLMDecisionStep(args: {
     },
     firecrawlResearch: {
       description: 'Search and scrape the web; call multiple times with focused queries',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           query: { type: 'string' },
@@ -396,7 +396,7 @@ export async function executeLLMDecisionStep(args: {
     },
     completeResearchSession: {
       description: 'Finalize a research session with a summary',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           summary: { type: 'string' },
@@ -415,7 +415,7 @@ export async function executeLLMDecisionStep(args: {
     },
     logActivity: {
       description: 'Log a completed activity to the database',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           type: { type: 'string' },
@@ -431,7 +431,7 @@ export async function executeLLMDecisionStep(args: {
     },
     askUser: {
       description: 'Ask the user a question; pause until answered',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           question: { type: 'string' },
@@ -470,7 +470,7 @@ export async function executeLLMDecisionStep(args: {
   if (args.enabledTools.includes('browser')) {
     tools.browserTask = {
       description: 'Execute browser automation tasks',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           task: { type: 'string' },
