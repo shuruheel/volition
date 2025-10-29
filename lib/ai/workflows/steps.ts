@@ -98,9 +98,12 @@ export async function logActivityStep(
 ) {
   'use step';
   
+  // Ensure payload is never null/undefined (DB constraint requires non-null)
+  const safePayload = payload || {};
+  
   await sql`
     INSERT INTO activities (agent_id, type, status, payload)
-    VALUES (${agentId}, ${type}, ${status}, ${JSON.stringify(payload)})
+    VALUES (${agentId}, ${type}, ${status}, ${JSON.stringify(safePayload)})
   `;
 }
 
@@ -550,7 +553,9 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'logActivity': {
-          await logActivityStep(agentId, args.type, args.payload);
+          // Ensure payload is never null/undefined
+          const payload = args.payload || {};
+          await logActivityStep(agentId, args.type, payload);
           result = { success: true };
           break;
         }
