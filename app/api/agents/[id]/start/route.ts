@@ -35,8 +35,29 @@ export async function POST(
     }
     
     const agent = agents[0];
-    
-    // Check if already active
+
+    // Idempotency window: if an active status update was recorded in the last 10s, do not enqueue again
+    const recentStatuses = await sql<any[]>`
+      SELECT status, last_update
+      FROM agent_status
+      WHERE agent_id = ${id}
+        AND last_update > NOW() - INTERVAL '10 seconds'
+      ORDER BY last_update DESC
+      LIMIT 1
+    `;
+
+    if (recentStatuses.length > 0 && recentStatuses[0].status === 'active') {
+      return NextResponse.json(
+        {
+          message: 'Agent start request accepted recently; skipping duplicate start',
+          workflowInvoked: false,
+          idempotent: true,
+        },
+        { status: 202 }
+      );
+    }
+
+    // If already active outside the window, treat as already running
     if (agent.status === 'active') {
       return NextResponse.json(
         { error: 'Agent is already active' },

@@ -6,6 +6,9 @@
 import { sql } from '@/lib/db';
 import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
 import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
+import { z } from 'zod';
+import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
+import { getStepMetadata } from 'workflow';
 
 /**
  * Execute a research step: search, scrape, and store content
@@ -60,9 +63,13 @@ export async function executeBrowserStep(agentId: string, task: string, maxSteps
   });
   
   try {
+    const { stepId } = getStepMetadata();
+
     const browserTask = await browserClient.tasks.createTask({
       task,
       maxSteps: maxSteps ?? 10,
+      // Attach idempotency metadata if supported by provider (no-op if ignored)
+      metadata: { idempotencyKey: stepId },
     });
     
     const result = await browserTask.complete();
@@ -323,5 +330,149 @@ export async function clearAgentStatusStep(agentId: string) {
     currentActivity: null,
     currentTool: null,
   });
+}
+
+/**
+ * Execute one LLM decision cycle with tools defined inside the step context.
+ * Returns serializable state deltas and finish reason.
+ */
+export async function executeLLMDecisionStep(args: {
+  agentId: string;
+  systemPrompt: string;
+  history: Array<any>;
+  researchContext?: string | null;
+  memoryContext?: string | null;
+  userPrompt: string;
+  enabledTools: string[];
+  currentSessionId: string | null;
+  researchStarted: boolean;
+}) {
+  'use step';
+
+  const { agentId, systemPrompt, history, researchContext, memoryContext, userPrompt } = args;
+  let { currentSessionId, researchStarted } = args;
+
+  // Import AI SDK within step context
+  const { generateText, stepCountIs } = await import('ai');
+  const { openai } = await import('@ai-sdk/openai');
+
+  const tools: Record<string, any> = {
+    startResearchSession: {
+      description: 'Start a new research session and initialize tracking',
+      inputSchema: z.object({
+        title: z.string().describe('Title for the research session'),
+      }),
+      execute: async ({ title }: { title: string }) => {
+        const result = await startResearchSessionStep(agentId, title);
+        currentSessionId = result.session_id;
+        researchStarted = false;
+        return { session_id: currentSessionId };
+      },
+    },
+    firecrawlResearch: {
+      description: 'Search and scrape the web; call multiple times with focused queries',
+      inputSchema: z.object({
+        query: z.string(),
+        limit: z.number().int().min(1).max(3).default(3),
+      }),
+      execute: async ({ query, limit }: { query: string; limit: number }) => {
+        if (!currentSessionId) return { success: false, error: 'No active session' };
+        researchStarted = true;
+        const result = await executeResearchStep(agentId, query, currentSessionId);
+        const links = result.leads.map((l: any) => l.url);
+        const notes = result.leads.map((l: any) => `${l.title}: ${l.url}`);
+        await appendToSessionStep(currentSessionId, query, links, notes);
+        return { success: true, itemsScraped: result.itemsScraped, session_id: currentSessionId };
+      },
+    },
+    completeResearchSession: {
+      description: 'Finalize a research session with a summary',
+      inputSchema: z.object({
+        summary: z.string(),
+      }),
+      execute: async ({ summary }: { summary: string }) => {
+        if (!currentSessionId) return { success: false, error: 'No active session' };
+        await completeResearchSessionStep(currentSessionId, summary);
+        const completed = currentSessionId;
+        currentSessionId = null;
+        researchStarted = false;
+        return { success: true, session_id: completed };
+      },
+    },
+    logActivity: {
+      description: 'Log a completed activity to the database',
+      inputSchema: z.object({
+        type: z.string(),
+        payload: z.record(z.any()),
+      }),
+      execute: async ({ type, payload }: { type: string; payload: any }) => {
+        await logActivityStep(agentId, type, payload);
+        return { success: true };
+      },
+    },
+    askUser: {
+      description: 'Ask the user a question; pause until answered',
+      inputSchema: z.object({
+        question: z.string(),
+        priority: z.enum(['low', 'medium', 'high']).default('medium'),
+      }),
+      execute: async ({ question, priority }: { question: string; priority: 'low' | 'medium' | 'high' }) => {
+        const activityId = await createPendingActivityStep(
+          agentId,
+          'user_input',
+          priority,
+          { question }
+        );
+
+        await updateAgentStatusStep(agentId, {
+          status: 'active',
+          currentActivity: 'Waiting for user input',
+          currentTool: 'askUser',
+        });
+
+        const token = `agent-${agentId}-activity-${activityId}`;
+        const events = userInputHook.create({ token });
+
+        for await (const event of events) {
+          await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
+          return { success: true, answer: event.answer };
+        }
+        return { success: false, error: 'No response received' };
+      },
+    },
+  };
+
+  // Conditionally include browser tool
+  if (args.enabledTools.includes('browser')) {
+    tools.browserTask = {
+      description: 'Execute browser automation tasks',
+      inputSchema: z.object({
+        task: z.string(),
+        maxSteps: z.number().min(1).max(20).default(10),
+      }),
+      execute: async ({ task, maxSteps }: { task: string; maxSteps: number }) => {
+        return await executeBrowserStep(agentId, task, maxSteps);
+      },
+    };
+  }
+
+  const result = await generateText({
+    model: openai('gpt-5-2025-08-07'),
+    system: systemPrompt,
+    messages: [
+      ...history,
+      ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
+      ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
+      { role: 'user', content: userPrompt },
+    ],
+    tools,
+    stopWhen: stepCountIs(1),
+  });
+
+  return {
+    finishReason: result.finishReason,
+    currentSessionId,
+    researchStarted,
+  } as const;
 }
 

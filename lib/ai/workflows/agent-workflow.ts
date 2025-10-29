@@ -9,25 +9,16 @@
  * See docs/workflow-vs-legacy-tools.md for detailed explanation.
  */
 
-import { openai } from '@ai-sdk/openai';
-import { z } from 'zod';
 import type { Agent } from '@/lib/db-types';
 import { withHITLGuidelines } from '../prompts';
-import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
 import {
-  executeResearchStep,
-  executeBrowserStep,
-  logActivityStep,
-  startResearchSessionStep,
-  appendToSessionStep,
-  completeResearchSessionStep,
   fetchAgentStep,
-  createPendingActivityStep,
-  updateActivityStatusStep,
   updateAgentDBStatusStep,
   getAgentContextStep,
   updateAgentStatusStep,
   clearAgentStatusStep,
+  logActivityStep,
+  executeLLMDecisionStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -80,216 +71,17 @@ export async function agentTaskWorkflow(
         currentActivity: `Step ${currentStep + 1}/${maxSteps}`,
       });
 
-      // Call LLM to decide next action
-      // Dynamic import to avoid workflow sandbox global issues
-      const { generateText, stepCountIs } = await import('ai');
-      const result = await generateText({
-        model: openai('gpt-5-2025-08-07'),
-        system: systemPrompt,
-        messages: [
-          ...history,
-          ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
-          ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
-          { role: 'user', content: initialPrompt },
-        ],
-        tools: {
-          // Research tools
-          startResearchSession: {
-            description: 'STEP 1 of research workflow. Start a new research session with a title. After calling this, you MUST call firecrawlResearch multiple times.',
-            inputSchema: z.object({
-              title: z.string().describe('Title for the research session'),
-            }),
-            execute: async ({ title }) => {
-              const result = await startResearchSessionStep(agentId, title);
-              currentSessionId = result.session_id;
-              researchStarted = false; // Reset for new session
-              console.log(`[Workflow] Started research session: ${currentSessionId}`);
-              return { session_id: currentSessionId, message: 'Session started. Now call firecrawlResearch to do actual research.' };
-            },
-          },
-
-          firecrawlResearch: {
-            description: 'STEP 2+ of research workflow. Search and scrape web content. Call this 3-5 times per session with different queries.',
-            inputSchema: z.object({
-              query: z.string().describe('Focused search query'),
-              limit: z.number().int().min(1).max(3).default(3).describe('Number of results to scrape'),
-            }),
-            execute: async ({ query, limit }) => {
-              if (!currentSessionId) {
-                return { success: false, error: 'No active session. Call startResearchSession first.' };
-              }
-              
-              researchStarted = true;
-              console.log(`[Workflow] Research query: ${query}`);
-              
-              const result = await executeResearchStep(agentId, query, currentSessionId);
-              
-              // Append to session
-              const links = result.leads.map((l: any) => l.url);
-              const notes = result.leads.map((l: any) => `${l.title}: ${l.url}`);
-              await appendToSessionStep(currentSessionId, query, links, notes);
-              
-              return {
-                success: true,
-                itemsScraped: result.itemsScraped,
-                session_id: currentSessionId,
-              };
-            },
-          },
-
-          completeResearchSession: {
-            description: 'FINAL STEP of research. Complete and finalize the research session with a summary.',
-            inputSchema: z.object({
-              summary: z.string().describe('Comprehensive summary of all research findings'),
-            }),
-            execute: async ({ summary }) => {
-              if (!currentSessionId) {
-                return { success: false, error: 'No active session to complete' };
-              }
-              
-              console.log(`[Workflow] Completing research session: ${currentSessionId}`);
-              await completeResearchSessionStep(currentSessionId, summary);
-              
-              const completedSessionId = currentSessionId;
-              currentSessionId = null; // Clear session
-              researchStarted = false;
-              
-              return {
-                success: true,
-                session_id: completedSessionId,
-                message: 'Research session completed successfully',
-              };
-            },
-          },
-
-          // Browser automation tool
-          ...(agent.tools.includes('browser')
-            ? {
-                browserTask: {
-                  description: 'Execute browser automation for interactive tasks (logins, forms, clicks)',
-                  inputSchema: z.object({
-                    task: z.string().describe('Natural language description of browser task'),
-                    maxSteps: z.number().min(1).max(20).default(10),
-                  }),
-                  execute: async ({ task, maxSteps }) => {
-                    console.log(`[Workflow] Browser task: ${task}`);
-                    return await executeBrowserStep(agentId, task, maxSteps);
-                  },
-                },
-              }
-            : {}),
-
-          // Human-in-the-loop tools
-          askUser: {
-            description: 'Ask the user a question when you need clarification. Workflow pauses until user responds.',
-            inputSchema: z.object({
-              question: z.string().describe('The question to ask'),
-              priority: z.enum(['low', 'medium', 'high']).default('medium'),
-            }),
-            execute: async ({ question, priority }) => {
-              console.log(`[Workflow] Asking user: ${question}`);
-              
-              // Create pending activity
-              const activityId = await createPendingActivityStep(
-                agentId,
-                'user_input',
-                priority,
-                { question }
-              );
-
-              await updateAgentStatusStep(agentId, {
-                status: 'active',
-                currentActivity: 'Waiting for user input',
-                currentTool: 'askUser',
-              });
-
-              // Pause workflow and wait for user input via hook
-              const token = `agent-${agentId}-activity-${activityId}`;
-              const events = userInputHook.create({ token });
-
-              for await (const event of events) {
-                console.log(`[Workflow] Received user answer: ${event.answer}`);
-                
-                // Update activity with answer
-                await updateActivityStatusStep(
-                  event.activityId,
-                  'approved',
-                  { answer: event.answer }
-                );
-
-                // Return answer to LLM
-                return {
-                  success: true,
-                  answer: event.answer,
-                  message: `User responded: ${event.answer}`,
-                };
-              }
-              
-              // Should never reach here
-              return { success: false, error: 'No response received' };
-            },
-          },
-
-          createPendingActivity: {
-            description: 'Create a pending activity that requires approval (e.g., phone call, email)',
-            inputSchema: z.object({
-              type: z.enum(['phone_call', 'email_sent', 'calendar_event_created']),
-              payload: z.record(z.any()).describe('Activity data'),
-              priority: z.enum(['low', 'medium', 'high']).default('medium'),
-            }),
-            execute: async ({ type, payload, priority }) => {
-              console.log(`[Workflow] Creating pending ${type}`);
-              
-              const activityId = await createPendingActivityStep(
-                agentId,
-                type,
-                priority,
-                payload
-              );
-
-              // Pause and wait for approval
-              const token = `agent-${agentId}-activity-${activityId}`;
-              
-              let hookToUse = activityApprovalHook;
-              if (type === 'phone_call') {
-                hookToUse = phoneCallHook;
-              }
-              
-              const events = hookToUse.create({ token });
-
-              for await (const event of events) {
-                console.log(`[Workflow] Activity ${type} ${event.approved ? 'approved' : 'rejected'}`);
-                
-                await updateActivityStatusStep(
-                  activityId,
-                  event.approved ? 'approved' : 'rejected'
-                );
-
-                return {
-                  success: true,
-                  approved: event.approved,
-                  activity_id: activityId,
-                  message: event.approved ? 'Activity approved' : 'Activity rejected',
-                };
-              }
-              
-              return { success: false, error: 'No approval received' };
-            },
-          },
-
-          logActivity: {
-            description: 'Log a completed activity to the database',
-            inputSchema: z.object({
-              type: z.string().describe('Activity type'),
-              payload: z.record(z.any()).describe('Activity data'),
-            }),
-            execute: async ({ type, payload }) => {
-              await logActivityStep(agentId, type, payload);
-              return { success: true, message: 'Activity logged' };
-            },
-          },
-        },
-        stopWhen: stepCountIs(1), // One LLM call per workflow step
+      // Execute one LLM decision inside a step (tools are defined in the step)
+      const result = await executeLLMDecisionStep({
+        agentId,
+        systemPrompt,
+        history,
+        researchContext,
+        memoryContext,
+        userPrompt: initialPrompt,
+        enabledTools: agent.tools,
+        currentSessionId,
+        researchStarted,
       });
 
       // Check finish reason
@@ -303,6 +95,10 @@ export async function agentTaskWorkflow(
       }
 
       // Prevent stopping if research session active but not started
+      // Sync state updates from step
+      currentSessionId = result.currentSessionId;
+      researchStarted = result.researchStarted;
+
       if (currentSessionId && !researchStarted) {
         console.log('[Workflow] Research session active but no research done yet, forcing continuation');
         currentStep++;
