@@ -9,7 +9,6 @@
  * See docs/workflow-vs-legacy-tools.md for detailed explanation.
  */
 
-import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 import type { Agent } from '@/lib/db-types';
@@ -29,6 +28,7 @@ import {
   getAgentContextStep,
   updateAgentStatusStep,
   clearAgentStatusStep,
+  generateTextStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -81,17 +81,8 @@ export async function agentTaskWorkflow(
         currentActivity: `Step ${currentStep + 1}/${maxSteps}`,
       });
 
-      // Call LLM to decide next action
-      const result = await generateText({
-        model: openai('gpt-5-2025-08-07'),
-        system: systemPrompt,
-        messages: [
-          ...history,
-          ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
-          ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
-          { role: 'user', content: initialPrompt },
-        ],
-        tools: {
+      // Build tools for this step
+      const tools = {
           // Research tools
           startResearchSession: {
             description: 'STEP 1 of research workflow. Start a new research session with a title. After calling this, you MUST call firecrawlResearch multiple times.',
@@ -287,8 +278,20 @@ export async function agentTaskWorkflow(
               return { success: true, message: 'Activity logged' };
             },
           },
-        },
-        maxSteps: 1, // One LLM call per workflow step
+        };
+
+      // Call LLM via step function (required for Vercel Workflow compatibility)
+      const result = await generateTextStep({
+        model: openai('gpt-5-2025-08-07'),
+        system: systemPrompt,
+        messages: [
+          ...history,
+          ...(researchContext ? [{ role: 'user' as const, content: researchContext }] : []),
+          ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
+          { role: 'user', content: initialPrompt },
+        ],
+        tools,
+        maxSteps: 1,
       });
 
       // Check finish reason

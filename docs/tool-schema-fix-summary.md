@@ -1,5 +1,11 @@
 # Tool Schema Fix Summary
 
+## Final Status: ✅ RESOLVED
+
+Both issues fixed:
+1. ✅ **Duplicate workflow starts** - Removed duplicate route
+2. ✅ **`originalGenerateId` error** - Moved `generateText` to step function
+
 ## Changes Made
 
 ### 1. Added Warning Headers to Tool Files
@@ -150,6 +156,45 @@ If the build works despite TypeScript errors, this confirms that:
 3. The workflow system works as originally implemented
 4. TypeScript errors can be ignored or suppressed
 
+## Additional Fixes (Post-Build)
+
+### 4. Fixed Duplicate Workflow Invocations
+
+**Problem**: Agents were starting multiple times
+
+**Root Cause**: Two API routes were invoking the workflow:
+- `/api/agents/[id]/start` (used by frontend) ✅
+- `/api/workflows/agent/[agentId]` (duplicate/leftover) ❌
+
+**Solution**: Deleted `/app/api/workflows/agent/[agentId]/route.ts`
+
+### 5. Fixed `originalGenerateId is not defined` Error
+
+**Problem**: `generateText` from AI SDK doesn't work directly in workflow functions
+
+**Root Cause**: Vercel Workflow's sandboxed environment doesn't support AI SDK's internal ID generation when called directly in workflow functions
+
+**Solution**: 
+- Created `generateTextStep` in `lib/ai/workflows/steps.ts`
+- Moved the `generateText` call from workflow function to step function
+- Workflows now delegate AI calls to steps (proper Vercel Workflow pattern)
+
+```typescript
+// NEW: Step function for AI calls
+export async function generateTextStep(params: {
+  model: any;
+  system: string;
+  messages: any[];
+  tools: Record<string, any>;
+  maxSteps: number;
+}) {
+  'use step';
+  
+  const { generateText } = await import('ai');
+  return await generateText({ ...params });
+}
+```
+
 ## Verification Commands
 
 ```bash
@@ -160,9 +205,9 @@ grep -r "from.*tools/" lib/ai/workflows/
 pnpm build
 
 # Test workflow locally (if dev server is running)
-curl -X POST http://localhost:3000/api/workflows/agent/[agentId] \
+curl -X POST http://localhost:3000/api/agents/[agentId]/start \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Research Next.js 16", "maxSteps": 10}'
+  -d '{"task": "Research Next.js 16"}'
 ```
 
 ## Documentation References
