@@ -419,12 +419,28 @@ export async function executeLLMDecisionStep(args: {
       type: 'function',
       function: {
         name: 'logActivity',
-        description: 'Log a completed activity to the database',
+        description: 'Log a completed activity to the database. Use this to record important events like completed research, viewed webpages, tasks done, etc.',
         parameters: {
           type: 'object',
           properties: {
-            type: { type: 'string' },
-            payload: { type: 'object', additionalProperties: true },
+            type: { 
+              type: 'string',
+              enum: [
+                'research',
+                'email_sent',
+                'phone_call',
+                'webpage_viewed',
+                'journal_read',
+                'task_completed',
+                'agent_stopped',
+              ],
+              description: 'Type of activity being logged',
+            },
+            payload: { 
+              type: 'object', 
+              additionalProperties: true,
+              description: 'Activity details (title, description, url, etc.)',
+            },
           },
           required: ['type', 'payload'],
           additionalProperties: false,
@@ -553,6 +569,20 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'logActivity': {
+          // Validate activity type
+          const validTypes = [
+            'research', 'email_sent', 'phone_call', 'webpage_viewed',
+            'journal_read', 'task_completed', 'agent_stopped'
+          ];
+          
+          if (!validTypes.includes(args.type)) {
+            result = { 
+              success: false, 
+              error: `Invalid activity type: ${args.type}. Must be one of: ${validTypes.join(', ')}` 
+            };
+            break;
+          }
+          
           // Ensure payload is never null/undefined
           const payload = args.payload || {};
           await logActivityStep(agentId, args.type, payload);
