@@ -339,9 +339,8 @@ export default function DashboardPage() {
 
         <div className="mb-6">
           <h2 className="text-sm font-medium text-muted-foreground mb-3">KEY METRICS (LAST 24 HOURS)</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {/* Total Spend - Hidden until we implement real cost tracking */}
-            {/* <Card className="border-border bg-gradient-to-br from-green-500/10 to-emerald-500/5">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <Card className="border-border bg-gradient-to-br from-green-500/10 to-emerald-500/5">
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <DollarSign className="h-4 w-4 text-green-600" />
@@ -349,7 +348,7 @@ export default function DashboardPage() {
                 </div>
                 <p className="text-2xl font-bold">{loading ? '...' : `$${metrics.totalSpend.toFixed(2)}`}</p>
               </CardContent>
-            </Card> */}
+            </Card>
 
             <Card className="border-border">
               <CardContent className="p-4">

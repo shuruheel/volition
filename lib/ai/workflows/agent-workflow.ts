@@ -5,7 +5,6 @@
 
 import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { z } from 'zod';
 import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
 import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
@@ -90,9 +89,17 @@ export async function agentTaskWorkflow(
           // Research tools
           startResearchSession: {
             description: 'STEP 1 of research workflow. Start a new research session with a title. After calling this, you MUST call firecrawlResearch multiple times.',
-            parameters: z.object({
-              title: z.string(),
-            }).describe('Start a new research session'),
+            parameters: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['title'],
+              properties: {
+                title: {
+                  type: 'string',
+                  description: 'Title for the research session',
+                },
+              },
+            },
             execute: async ({ title }) => {
               const result = await startResearchSessionStep(agentId, title);
               currentSessionId = result.session_id;
@@ -104,10 +111,24 @@ export async function agentTaskWorkflow(
 
           firecrawlResearch: {
             description: 'STEP 2+ of research workflow. Search and scrape web content. Call this 3-5 times per session with different queries.',
-            parameters: z.object({
-              query: z.string(),
-              limit: z.number().int().min(1).max(3).default(3),
-            }).describe('Research query and limit'),
+            parameters: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['query'],
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'Focused search query',
+                },
+                limit: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 3,
+                  default: 3,
+                  description: 'Number of results to scrape',
+                },
+              },
+            },
             execute: async ({ query, limit }) => {
               if (!currentSessionId) {
                 return { success: false, error: 'No active session. Call startResearchSession first.' };
@@ -133,9 +154,17 @@ export async function agentTaskWorkflow(
 
           completeResearchSession: {
             description: 'FINAL STEP of research. Complete and finalize the research session with a summary.',
-            parameters: z.object({
-              summary: z.string(),
-            }).describe('Summary of research findings'),
+            parameters: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['summary'],
+              properties: {
+                summary: {
+                  type: 'string',
+                  description: 'Comprehensive summary of all research findings',
+                },
+              },
+            },
             execute: async ({ summary }) => {
               if (!currentSessionId) {
                 return { success: false, error: 'No active session to complete' };
@@ -161,10 +190,24 @@ export async function agentTaskWorkflow(
             ? {
                 browserTask: {
                   description: 'Execute browser automation for interactive tasks (logins, forms, clicks)',
-                  parameters: z.object({
-                    task: z.string(),
-                    maxSteps: z.number().min(1).max(20).default(10),
-                  }).describe('Browser task and max steps'),
+                  parameters: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['task'],
+                    properties: {
+                      task: {
+                        type: 'string',
+                        description: 'Natural language description of browser task',
+                      },
+                      maxSteps: {
+                        type: 'integer',
+                        minimum: 1,
+                        maximum: 20,
+                        default: 10,
+                        description: 'Maximum number of steps for the browser agent',
+                      },
+                    },
+                  },
                   execute: async ({ task, maxSteps }) => {
                     console.log(`[Workflow] Browser task: ${task}`);
                     return await executeBrowserStep(agentId, task, maxSteps);
@@ -176,10 +219,23 @@ export async function agentTaskWorkflow(
           // Human-in-the-loop tools
           askUser: {
             description: 'Ask the user a question when you need clarification. Workflow pauses until user responds.',
-            parameters: z.object({
-              question: z.string(),
-              priority: z.enum(['low', 'medium', 'high']).default('medium'),
-            }).describe('Question and priority'),
+            parameters: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['question'],
+              properties: {
+                question: {
+                  type: 'string',
+                  description: 'The question to ask',
+                },
+                priority: {
+                  type: 'string',
+                  enum: ['low', 'medium', 'high'],
+                  default: 'medium',
+                  description: 'Priority of the question',
+                },
+              },
+            },
             execute: async ({ question, priority }) => {
               console.log(`[Workflow] Asking user: ${question}`);
               
@@ -227,11 +283,29 @@ export async function agentTaskWorkflow(
 
           createPendingActivity: {
             description: 'Create a pending activity that requires approval (e.g., phone call, email)',
-            parameters: z.object({
-              type: z.enum(['phone_call', 'email_sent', 'calendar_event_created']),
-              payload: z.record(z.any()),
-              priority: z.enum(['low', 'medium', 'high']).default('medium'),
-            }).describe('Activity type, payload, and priority'),
+            parameters: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['type', 'payload'],
+              properties: {
+                type: {
+                  type: 'string',
+                  enum: ['phone_call', 'email_sent', 'calendar_event_created'],
+                  description: 'Type of activity to create',
+                },
+                payload: {
+                  type: 'object',
+                  description: 'Activity data',
+                  additionalProperties: true,
+                },
+                priority: {
+                  type: 'string',
+                  enum: ['low', 'medium', 'high'],
+                  default: 'medium',
+                  description: 'Priority level for the activity',
+                },
+              },
+            },
             execute: async ({ type, payload, priority }) => {
               console.log(`[Workflow] Creating pending ${type}`);
               
@@ -275,10 +349,22 @@ export async function agentTaskWorkflow(
 
           logActivity: {
             description: 'Log a completed activity to the database',
-            parameters: z.object({
-              type: z.string().describe('Activity type'),
-              payload: z.record(z.any()).describe('Activity data'),
-            }),
+            parameters: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['type', 'payload'],
+              properties: {
+                type: {
+                  type: 'string',
+                  description: 'Activity type',
+                },
+                payload: {
+                  type: 'object',
+                  description: 'Activity data',
+                  additionalProperties: true,
+                },
+              },
+            },
             execute: async ({ type, payload }) => {
               await logActivityStep(agentId, type, payload);
               return { success: true, message: 'Activity logged' };
