@@ -474,48 +474,78 @@ export async function executeLLMDecisionStep(args: {
   }
   messages.push({ role: 'user', content: userPrompt });
 
-  // Call OpenAI API directly
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages,
-    tools,
-    tool_choice: 'auto',
-  });
-
-  const message = completion.choices[0]?.message;
+  // Multi-turn conversation loop (like AI SDK maxSteps behavior)
+  const conversationMessages = [...messages];
+  let lastFinishReason = 'stop';
+  const maxTurns = 5; // Allow up to 5 tool call rounds per workflow step
   
-  // Execute tool calls if any
-  if (message?.tool_calls && message.tool_calls.length > 0) {
+  for (let turn = 0; turn < maxTurns; turn++) {
+    // Call OpenAI API
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-5-2025-08-07', // Use latest gpt-4o with strong tool calling
+      messages: conversationMessages,
+      tools,
+      tool_choice: 'auto',
+    });
+
+    const message = completion.choices[0]?.message;
+    lastFinishReason = message?.finish_reason || 'stop';
+    
+    // Add assistant message to conversation
+    if (message) {
+      conversationMessages.push(message);
+    }
+    
+    // If no tool calls, we're done
+    if (!message?.tool_calls || message.tool_calls.length === 0) {
+      break;
+    }
+    
+    // Execute tool calls and collect results
+    const toolResults: Array<any> = [];
+    
     for (const toolCall of message.tool_calls) {
       const functionName = toolCall.function.name;
       const args = JSON.parse(toolCall.function.arguments);
+      let result: any = { success: false, error: 'Unknown tool' };
 
       // Execute the appropriate tool
       switch (functionName) {
         case 'startResearchSession': {
-          const result = await startResearchSessionStep(agentId, args.title);
-          currentSessionId = result.session_id;
+          const res = await startResearchSessionStep(agentId, args.title);
+          currentSessionId = res.session_id;
           researchStarted = false;
+          result = { success: true, session_id: currentSessionId };
           break;
         }
         case 'firecrawlResearch': {
-          if (!currentSessionId) break;
-          researchStarted = true;
-          const result = await executeResearchStep(agentId, args.query, currentSessionId);
-          const links = result.leads.map((l: any) => l.url);
-          const notes = result.leads.map((l: any) => `${l.title}: ${l.url}`);
-          await appendToSessionStep(currentSessionId, args.query, links, notes);
+          if (!currentSessionId) {
+            result = { success: false, error: 'No active session' };
+          } else {
+            researchStarted = true;
+            const res = await executeResearchStep(agentId, args.query, currentSessionId);
+            const links = res.leads.map((l: any) => l.url);
+            const notes = res.leads.map((l: any) => `${l.title}: ${l.url}`);
+            await appendToSessionStep(currentSessionId, args.query, links, notes);
+            result = { success: true, itemsScraped: res.itemsScraped, session_id: currentSessionId };
+          }
           break;
         }
         case 'completeResearchSession': {
-          if (!currentSessionId) break;
-          await completeResearchSessionStep(currentSessionId, args.summary);
-          currentSessionId = null;
-          researchStarted = false;
+          if (!currentSessionId) {
+            result = { success: false, error: 'No active session' };
+          } else {
+            await completeResearchSessionStep(currentSessionId, args.summary);
+            const completedId = currentSessionId;
+            currentSessionId = null;
+            researchStarted = false;
+            result = { success: true, session_id: completedId };
+          }
           break;
         }
         case 'logActivity': {
           await logActivityStep(agentId, args.type, args.payload);
+          result = { success: true };
           break;
         }
         case 'askUser': {
@@ -537,21 +567,33 @@ export async function executeLLMDecisionStep(args: {
 
           for await (const event of events) {
             await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
-            break; // Exit after first response
+            result = { success: true, answer: event.answer };
+            break;
           }
           break;
         }
         case 'browserTask': {
-          await executeBrowserStep(agentId, args.task, args.maxSteps || 10);
+          result = await executeBrowserStep(agentId, args.task, args.maxSteps || 10);
           break;
         }
       }
+      
+      // Add tool result to conversation
+      toolResults.push({
+        tool_call_id: toolCall.id,
+        role: 'tool',
+        name: functionName,
+        content: JSON.stringify(result),
+      });
     }
+    
+    // Add all tool results to conversation
+    conversationMessages.push(...toolResults);
   }
 
   // Return serializable data only
   return {
-    finishReason: message?.finish_reason || 'stop',
+    finishReason: lastFinishReason,
     currentSessionId,
     researchStarted,
   };
