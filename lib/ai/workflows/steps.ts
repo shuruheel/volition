@@ -8,7 +8,6 @@ import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
 import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
 import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
 import { getStepMetadata } from 'workflow';
-import OpenAI from 'openai';
 
 /**
  * Execute a research step: search, scrape, and store content
@@ -353,6 +352,8 @@ export async function executeLLMDecisionStep(args: {
   let { currentSessionId, researchStarted } = args;
 
   // Use raw OpenAI SDK to avoid AI SDK serialization issues
+  const { default: OpenAI } = await import('openai');
+  
   const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY!,
   });
