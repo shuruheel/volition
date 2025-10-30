@@ -62,6 +62,24 @@ export async function GET(request: NextRequest) {
     `;
     const memoriesAdded = parseInt(memoriesResult[0].count as string);
     
+    // Debug logging for memory metrics
+    if (agentId) {
+      const debugMemories = await sql`
+        SELECT id, agent_id, kind, created_at, provider_id
+        FROM memories
+        WHERE agent_id = ${agentId}
+        ORDER BY created_at DESC
+        LIMIT 5
+      `;
+      console.log(`[Metrics] Debug - Found ${memoriesAdded} memories in last 24h for agent ${agentId}`);
+      console.log(`[Metrics] Debug - Recent memories:`, debugMemories.map((m: any) => ({ 
+        id: m.id, 
+        agent_id: m.agent_id, 
+        created_at: m.created_at,
+        kind: m.kind 
+      })));
+    }
+    
     // Actions Done (completed activities in last 24h)
     const actionsResult = await sql`
       SELECT COUNT(*) as count

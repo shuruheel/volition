@@ -669,7 +669,7 @@ export async function executeLLMDecisionStep(args: {
   // Multi-turn conversation loop (like AI SDK maxSteps behavior)
   const conversationMessages = [...messages];
   let lastFinishReason = 'stop';
-  const maxTurns = 40; // Allow up to 40 tool call rounds per workflow step
+  const maxTurns = 10; // Reduced from 40 to 10 to avoid timeout (each turn can take several seconds)
   
   // Log initial state for debugging
   console.log(`[executeLLMDecisionStep] Starting with ${conversationMessages.length} messages`);

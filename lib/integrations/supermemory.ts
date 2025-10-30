@@ -62,14 +62,17 @@ export async function storeMarkdown({ agentId, url, title, markdown }: StoreMark
         'document', 
         ${JSON.stringify({ url, title, source: 'firecrawl' })}
       )
-      RETURNING id, provider_id
+      RETURNING id, provider_id, agent_id, created_at
     `
-    console.log('[storeMarkdown] Successfully stored memory with ID:', memory.id)
+    console.log('[storeMarkdown] Successfully stored memory with ID:', memory.id, 'agent_id:', memory.agent_id, 'created_at:', memory.created_at)
     return { providerId, memoryId: memory.id }
   } catch (error) {
     console.error('[storeMarkdown] Database insert failed:', error)
     console.error('[storeMarkdown] Database error details:', error instanceof Error ? error.message : String(error))
-    throw new Error(`Failed to store memory reference: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error('[storeMarkdown] Failed insert params:', { agentId, providerId, url, title })
+    // Don't throw - continue even if DB insert fails (Supermemory storage succeeded)
+    // This allows the workflow to continue but we lose the local reference
+    return { providerId, memoryId: undefined }
   }
 }
 

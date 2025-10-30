@@ -76,7 +76,7 @@ export async function POST(
     await updateAgentStatus(id, {
       status: 'active',
       currentStep: 0,
-      totalSteps: 40,
+      totalSteps: 20,
       currentActivity: 'Starting workflow...',
     });
     
@@ -86,8 +86,8 @@ export async function POST(
     console.log(`[Agent Start] Invoking workflow for agent ${id}`);
     
     // CRITICAL: Use start() from workflow/api to properly invoke the workflow
-    // This enqueues the workflow and returns a Run object
-    const run = await start(agentTaskWorkflow, [id, prompt, 40]);
+    // Reduced to 20 steps to avoid 300s timeout (each step can take ~15s with LLM calls)
+    const run = await start(agentTaskWorkflow, [id, prompt, 20]);
     
     console.log(`[Agent Start] Workflow started with runId: ${run.runId}`);
     

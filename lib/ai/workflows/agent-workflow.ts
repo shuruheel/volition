@@ -24,7 +24,7 @@ import {
 export async function agentTaskWorkflow(
   agentId: string,
   initialPrompt: string,
-  maxSteps: number = 40
+  maxSteps: number = 20
 ) {
   'use workflow';
 
