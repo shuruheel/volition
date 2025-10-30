@@ -193,13 +193,51 @@ export async function searchAndScrape(params: SearchAndScrapeParams): Promise<Se
     dataIsArray: Array.isArray(json?.data),
     dataKeys: json?.data && typeof json?.data === 'object' ? Object.keys(json?.data) : 'N/A',
     rawDataLength: Array.isArray(json?.data) ? json.data.length : 'N/A',
+    webArrayLength: json?.data?.web && Array.isArray(json.data.web) ? json.data.web.length : 'N/A',
   });
 
-  // When scrapeOptions are provided, Firecrawl returns an array in data
-  const data = Array.isArray(json?.data) ? json.data : [];
+  // When scrapeOptions are provided, Firecrawl may return:
+  // - { data: [...] } (array format) OR
+  // - { data: { web: [...] } } (object format with web array)
+  // Handle both cases
+  let data: any[] = [];
+  
+  if (Array.isArray(json?.data)) {
+    // Format 1: Direct array
+    data = json.data;
+  } else if (json?.data && typeof json.data === 'object') {
+    // Format 2: Object with web/news/images arrays
+    // When scrapeOptions are provided, check web array first
+    if (Array.isArray(json.data.web)) {
+      data = json.data.web;
+    } else if (Array.isArray(json.data.news)) {
+      data = json.data.news;
+    } else if (Array.isArray(json.data.images)) {
+      data = json.data.images;
+    }
+  }
+  
+  console.log(`[Firecrawl] Extracted ${data.length} items from response (format: ${Array.isArray(json?.data) ? 'array' : 'object'})`);
+
   const items: SearchAndScrapeItem[] = [];
   for (const it of data) {
-    if (!it || typeof it.url !== 'string') continue;
+    if (!it || typeof it.url !== 'string') {
+      console.log(`[Firecrawl] Skipping invalid item:`, { hasUrl: !!it?.url, itemKeys: it ? Object.keys(it).slice(0, 5) : 'null' });
+      continue;
+    }
+    
+    // Log first item structure for debugging
+    if (items.length === 0) {
+      console.log(`[Firecrawl] First item structure:`, {
+        url: it.url,
+        hasTitle: !!it.title,
+        hasMarkdown: !!it.markdown,
+        hasDescription: !!(it.description || it.snippet),
+        hasLinks: Array.isArray(it.links),
+        allKeys: Object.keys(it).slice(0, 10),
+      });
+    }
+    
     items.push({
       url: it.url,
       title: it.title,
