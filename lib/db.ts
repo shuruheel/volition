@@ -1,13 +1,6 @@
 import { neon, neonConfig } from '@neondatabase/serverless';
 import { Pool } from '@neondatabase/serverless';
 
-// Configure WebSocket for Node.js if needed
-if (typeof WebSocket === 'undefined') {
-  import('ws').then((ws) => {
-    neonConfig.webSocketConstructor = ws.default;
-  });
-}
-
 // Connection string from environment
 const DATABASE_URL = process.env.DATABASE_URL;
 const DATABASE_URL_POOLED = process.env.DATABASE_URL_POOLED || DATABASE_URL;
@@ -17,20 +10,55 @@ if (!DATABASE_URL) {
 }
 
 /**
+ * Lazy WebSocket initialization for Pool (only when needed)
+ * This avoids bundling Node.js modules into workflow functions
+ */
+let wsInitialized = false;
+async function ensureWebSocket() {
+  if (typeof WebSocket === 'undefined' && !wsInitialized) {
+    wsInitialized = true;
+    try {
+      const ws = await import('ws');
+      neonConfig.webSocketConstructor = ws.default;
+    } catch (e) {
+      // ws not available, Pool will use HTTP fallback
+      console.warn('WebSocket not available, Pool will use HTTP');
+    }
+  }
+}
+
+/**
  * Neon SQL client for simple queries (HTTP)
  * Use this for most operations - it's fast and works in edge environments
+ * This uses HTTP by default and doesn't need WebSocket
  */
 export const sql = neon(DATABASE_URL);
 
 /**
  * Neon Pool client for transactions and connection pooling
  * Use this when you need transactions or multiple concurrent queries
+ * Pool is created lazily to avoid bundling ws module
  */
-export const pool = new Pool({
-  connectionString: DATABASE_URL_POOLED,
-  max: 20, // Maximum pool size
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+let _pool: Pool | null = null;
+export async function getPool(): Promise<Pool> {
+  if (!_pool) {
+    await ensureWebSocket(); // Only initialize ws when Pool is actually used
+    _pool = new Pool({
+      connectionString: DATABASE_URL_POOLED,
+      max: 20, // Maximum pool size
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+  }
+  return _pool;
+}
+
+// For backward compatibility, export pool as a getter that throws if used in workflow
+// In workflow functions, Pool should be obtained via getPool() inside step functions
+export const pool = new Proxy({} as Pool, {
+  get: () => {
+    throw new Error('Direct pool access not allowed. Use getPool() inside step functions instead.');
+  },
 });
 
 /**

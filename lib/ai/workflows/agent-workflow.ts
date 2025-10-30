@@ -18,7 +18,7 @@ import {
   clearAgentStatusStep,
   logActivityStep,
   executeLLMDecisionStep,
-  completeResearchSessionStep,
+  autoCompleteResearchSessionStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -120,22 +120,11 @@ export async function agentTaskWorkflow(
     // Auto-complete research session if workflow ends without explicit completion
     if (currentSessionId) {
       try {
-        const { sql } = await import('@/lib/db');
-        const [row] = await sql<any[]>`
-          SELECT payload, status FROM activities WHERE id = ${currentSessionId}
-        `;
-        if (row && row.status !== 'completed') {
-          const payload = (row.payload ?? {}) as Record<string, any>;
-          const notes: string[] = Array.isArray(payload.notes) ? payload.notes : [];
-          const queries: string[] = Array.isArray(payload.queries) ? payload.queries : [];
-          
-          // Only auto-complete if there's actual research content
-          if (notes.length > 0 || queries.length > 0) {
-            const { generateSummary } = await import('@/lib/ai/utils');
-            const summary = await generateSummary(notes.join('\n\n'), `Queries: ${queries.join('; ')}`);
-            await completeResearchSessionStep(currentSessionId, summary);
-            console.log(`[Workflow] Auto-completed research session ${currentSessionId}`);
-          }
+        const result = await autoCompleteResearchSessionStep(currentSessionId);
+        if (result.success) {
+          console.log(`[Workflow] Auto-completed research session ${currentSessionId}`);
+        } else if (result.skipped) {
+          console.log(`[Workflow] Skipped auto-complete: ${result.reason}`);
         }
       } catch (e) {
         console.error('[Workflow] Auto-complete research session failed:', e);

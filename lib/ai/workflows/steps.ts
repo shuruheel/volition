@@ -37,7 +37,7 @@ export async function executeResearchStep(agentId: string, query: string, sessio
         title: item.title, 
         markdown: md 
       });
-      console.log(`[executeResearchStep] Stored memory for ${item.url}, memoryId: ${stored.memoryId || 'N/A'}, providerId: ${stored.providerId}`);
+      console.log(`[executeResearchStep] Stored memory for ${item.url}, memoryId: ${stored.memoryId}`);
       leads.push({ url: item.url, title: item.title, providerId: stored.providerId });
     }
   }
@@ -184,14 +184,48 @@ export async function completeResearchSessionStep(sessionId: string, summary: st
 
   const payload = (row.payload ?? {}) as Record<string, any>;
   const nextPayload = { ...payload, summary };
-  
-  console.log(`[completeResearchSessionStep] Completing session ${sessionId} with summary length: ${summary.length}`);
+
   await sql`
     UPDATE activities
     SET status = 'completed', payload = ${JSON.stringify(nextPayload)}
     WHERE id = ${sessionId}
   `;
-  console.log(`[completeResearchSessionStep] Session ${sessionId} marked as completed`);
+  
+  console.log(`[completeResearchSessionStep] Completing session ${sessionId} with summary length: ${summary.length}`);
+}
+
+/**
+ * Auto-complete research session if it has research content but no summary
+ * This is used as a fallback when workflow ends without explicit completion
+ */
+export async function autoCompleteResearchSessionStep(sessionId: string) {
+  'use step';
+  
+  const [row] = await sql<any[]>`
+    SELECT payload, status FROM activities WHERE id = ${sessionId}
+  `;
+  
+  if (!row || row.status === 'completed') {
+    return { skipped: true, reason: 'Session not found or already completed' };
+  }
+  
+  const payload = (row.payload ?? {}) as Record<string, any>;
+  const notes: string[] = Array.isArray(payload.notes) ? payload.notes : [];
+  const queries: string[] = Array.isArray(payload.queries) ? payload.queries : [];
+  
+  // Only auto-complete if there's actual research content
+  if (notes.length === 0 && queries.length === 0) {
+    return { skipped: true, reason: 'No research content found' };
+  }
+  
+  // Generate summary using AI
+  const { generateSummary } = await import('@/lib/ai/utils');
+  const summary = await generateSummary(notes.join('\n\n'), `Queries: ${queries.join('; ')}`);
+  
+  // Complete the session
+  await completeResearchSessionStep(sessionId, summary);
+  
+  return { success: true, sessionId, summaryLength: summary.length };
 }
 
 /**

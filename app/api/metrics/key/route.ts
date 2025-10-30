@@ -54,7 +54,6 @@ export async function GET(request: NextRequest) {
     const pendingApprovals = parseInt(pendingApprovalsResult[0].count as string);
     
     // Memories Added (last 24h)
-    console.log(`[Metrics] Counting memories for agentId: ${agentId || 'all'}, since: ${oneDayAgo.toISOString()}`);
     const memoriesResult = await sql`
       SELECT COUNT(*) as count
       FROM memories
@@ -62,7 +61,6 @@ export async function GET(request: NextRequest) {
       ${agentFilter}
     `;
     const memoriesAdded = parseInt(memoriesResult[0].count as string);
-    console.log(`[Metrics] Memories found: ${memoriesAdded}`);
     
     // Actions Done (completed activities in last 24h)
     const actionsResult = await sql`
