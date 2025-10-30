@@ -80,8 +80,8 @@ export async function POST(
       currentActivity: 'Starting workflow...',
     });
     
-    // Default prompt should explicitly direct the agent to research the topics in its system prompt
-    const prompt = task || 'Begin researching the topics specified in your system prompt. Follow the research workflow: start a research session, conduct multiple research queries on the relevant topics, and complete the session with a comprehensive summary. Focus on the actual research topics (context engineering, fine-tuning, knowledge graphs, advanced reasoning) rather than the tools themselves.';
+    // Default prompt should emphasize continuous research agent behavior
+    const prompt = task || 'You are a CONTINUOUS RESEARCH AGENT. Your goal is to populate your memory with comprehensive, high-quality research based on your system prompt (the agent prompt defined by the user). Begin by starting your first research session on the topics specified in your system prompt. After completing each session, analyze findings, identify knowledge gaps, and plan your next research session. If unclear about priorities, ask the user for guidance using the askUser tool. Continue researching until you have comprehensive coverage of all topics in your system prompt.';
     
     console.log(`[Agent Start] Invoking workflow for agent ${id}`);
     

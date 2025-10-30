@@ -18,6 +18,7 @@ import {
   clearAgentStatusStep,
   logActivityStep,
   executeLLMDecisionStep,
+  executeLLMDecisionStepV2, // TEST: New AI SDK version
   autoCompleteResearchSessionStep,
 } from './steps';
 
@@ -77,9 +78,14 @@ export async function agentTaskWorkflow(
         currentActivity: `Step ${currentStep + 1}/${maxSteps}`,
       });
 
+      // TEST: Use V2 (AI SDK) instead of V1 (raw OpenAI)
+      // Set USE_AI_SDK_WORKFLOW=true to test the new pattern
+      const useAISDK = process.env.USE_AI_SDK_WORKFLOW === 'true';
+      const executeStep = useAISDK ? executeLLMDecisionStepV2 : executeLLMDecisionStep;
+      
       // Execute one LLM decision inside a step (tools are defined in the step)
       // Ensure all arguments are serializable by deep cloning through JSON
-      const result = await executeLLMDecisionStep({
+      const result = await executeStep({
         agentId: String(agentId),
         systemPrompt: String(systemPrompt),
         history: JSON.parse(JSON.stringify(history)),
@@ -97,6 +103,22 @@ export async function agentTaskWorkflow(
       // Sync state updates from step
       currentSessionId = result.currentSessionId;
       researchStarted = result.researchStarted;
+      const researchSessionCompleted = result.researchSessionCompleted;
+
+      // If a research session was just completed, update userPrompt to encourage analysis and planning
+      if (researchSessionCompleted) {
+        console.log('[Workflow] Research session completed, encouraging post-session analysis and planning');
+        // Update initialPrompt to guide agent to analyze findings and plan next steps
+        // This will be passed to the next step execution
+        initialPrompt = `You've just completed a research session. Now you MUST:
+1. Analyze what you've learned in this session
+2. Review your system prompt to identify remaining knowledge gaps
+3. Plan what research topic to tackle next
+4. If unclear about next priorities, use askUser to ask for guidance
+5. If clear, proceed to start a new research session on the next topic
+
+Remember: You are a CONTINUOUS RESEARCH AGENT. Your goal is to populate your memory with comprehensive research based on your system prompt. Do NOT stop after one session - continue researching until you have comprehensive coverage of all topics in your system prompt.`;
+      }
 
       // Check finish reason
       if (result.finishReason === 'stop') {

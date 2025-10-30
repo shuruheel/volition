@@ -146,8 +146,20 @@ export function UnifiedActivityCard({
           <div className="space-y-2">
             {payload.title && <p className="font-medium">{payload.title}</p>}
             {(payload.summary || payload.description) && (
-              <div className="prose prose-invert max-w-none text-sm">
-                <ReactMarkdown>{String(payload.summary || payload.description)}</ReactMarkdown>
+              <div className="prose prose-invert max-w-none text-sm prose-p:my-4 prose-headings:mt-6 prose-headings:mb-3 prose-ul:my-4 prose-ol:my-4 prose-li:my-2">
+                <ReactMarkdown
+                  components={{
+                    p: ({ node, ...props }) => <p className="my-4 leading-relaxed" {...props} />,
+                    h1: ({ node, ...props }) => <h1 className="text-xl font-bold mt-6 mb-3 text-foreground" {...props} />,
+                    h2: ({ node, ...props }) => <h2 className="text-lg font-bold mt-5 mb-2 text-foreground" {...props} />,
+                    h3: ({ node, ...props }) => <h3 className="text-base font-semibold mt-4 mb-2 text-foreground" {...props} />,
+                    ul: ({ node, ...props }) => <ul className="my-4 space-y-2 list-disc pl-6" {...props} />,
+                    ol: ({ node, ...props }) => <ol className="my-4 space-y-2 list-decimal pl-6" {...props} />,
+                    li: ({ node, ...props }) => <li className="my-2" {...props} />,
+                  }}
+                >
+                  {String(payload.summary || payload.description)}
+                </ReactMarkdown>
               </div>
             )}
             {Array.isArray(payload.links) && payload.links.length > 0 && (

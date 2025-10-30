@@ -21,6 +21,7 @@ export interface StoreMarkdownResult {
 
 export async function storeMarkdown({ agentId, url, title, markdown }: StoreMarkdownInput): Promise<StoreMarkdownResult> {
   console.log('[storeMarkdown] Storing content for URL:', url)
+  console.log('[storeMarkdown] Content length:', markdown.length, 'chars')
   
   let providerId: string | undefined
 
@@ -30,19 +31,22 @@ export async function storeMarkdown({ agentId, url, title, markdown }: StoreMark
     console.log('[storeMarkdown] Using Supermemory API')
     try {
       const sm = new Supermemory({ apiKey })
-      const doc = await sm.documents.create({
+      // Use documents.add() as per Supermemory SDK docs
+      const doc = await sm.documents.add({
         content: markdown,
         metadata: { agentId, url, title, source: 'firecrawl' },
       })
       providerId = doc.id
-      console.log('[storeMarkdown] Supermemory document created:', providerId)
+      console.log('[storeMarkdown] Supermemory document added successfully:', providerId)
     } catch (error) {
       console.error('[storeMarkdown] Supermemory API error:', error)
+      console.error('[storeMarkdown] Error details:', error instanceof Error ? error.message : String(error))
       // Fall back to hash-based ID if Supermemory fails
       providerId = `firecrawl:${crypto.createHash('sha1').update(url).digest('hex')}`
+      console.warn('[storeMarkdown] Falling back to hash-based providerId:', providerId)
     }
   } else {
-    console.log('[storeMarkdown] No Supermemory API key, using fallback')
+    console.warn('[storeMarkdown] No Supermemory API key configured, using fallback')
     // Fallback: deterministic id
     providerId = `firecrawl:${crypto.createHash('sha1').update(url).digest('hex')}`
   }
@@ -64,6 +68,7 @@ export async function storeMarkdown({ agentId, url, title, markdown }: StoreMark
     return { providerId, memoryId: memory.id }
   } catch (error) {
     console.error('[storeMarkdown] Database insert failed:', error)
+    console.error('[storeMarkdown] Database error details:', error instanceof Error ? error.message : String(error))
     throw new Error(`Failed to store memory reference: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }

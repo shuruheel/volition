@@ -378,6 +378,233 @@ export async function clearAgentStatusStep(agentId: string) {
 }
 
 /**
+ * TEST: Execute one LLM decision cycle using AI SDK with workflow fetch.
+ * This tests if we can use AI SDK's generateText with maxSteps instead of manual loops.
+ */
+export async function executeLLMDecisionStepV2(args: {
+  agentId: string;
+  systemPrompt: string;
+  history: Array<any>;
+  researchContext?: string | null;
+  memoryContext?: string | null;
+  userPrompt: string;
+  enabledTools: string[];
+  currentSessionId: string | null;
+  researchStarted: boolean;
+}) {
+  'use step';
+
+  const { agentId, systemPrompt, history, researchContext, memoryContext, userPrompt } = args;
+  let currentSessionId = args.currentSessionId;
+  let researchStarted = args.researchStarted;
+  let researchSessionCompleted = false;
+
+  // CRITICAL: Set workflow's fetch for AI SDK to automatically create steps
+  const { fetch: workflowFetch } = await import('workflow');
+  globalThis.fetch = workflowFetch;
+
+  // Dynamically import AI SDK and OpenAI provider
+  const { generateText } = await import('ai');
+  const { openai } = await import('@ai-sdk/openai');
+  const { tool } = await import('ai');
+  const { z } = await import('zod');
+
+  // Build messages array
+  const messages: Array<any> = [];
+  if (history && history.length > 0) {
+    messages.push(...history);
+  }
+  if (researchContext) {
+    messages.push({ role: 'user', content: researchContext });
+  }
+  if (memoryContext) {
+    messages.push({ role: 'user', content: memoryContext });
+  }
+  messages.push({ role: 'user', content: userPrompt });
+
+  // Define tools using AI SDK tool() helper - these will call step functions directly
+  const tools: Record<string, any> = {
+    startResearchSession: tool({
+      description: 'Start a new research session and initialize tracking',
+      inputSchema: z.object({
+        title: z.string().describe('Title for the research session'),
+      }),
+      execute: async ({ title }) => {
+        const res = await startResearchSessionStep(agentId, title);
+        currentSessionId = res.session_id;
+        researchStarted = false;
+        return { success: true, session_id: currentSessionId };
+      },
+    }),
+
+    firecrawlResearch: tool({
+      description: 'Search and scrape the web; call multiple times with focused queries',
+      inputSchema: z.object({
+        query: z.string(),
+        limit: z.number().int().min(1).max(3).default(3),
+      }),
+      execute: async ({ query }) => {
+        if (!currentSessionId) {
+          return { success: false, error: 'No active session' };
+        }
+        researchStarted = true;
+        const res = await executeResearchStep(agentId, query, currentSessionId);
+        const links = res.leads.map((l: any) => l.url);
+        const notes = res.leads.map((l: any) => `${l.title}: ${l.url}`);
+        await appendToSessionStep(currentSessionId, query, links, notes);
+        return { success: true, itemsScraped: res.itemsScraped, session_id: currentSessionId };
+      },
+    }),
+
+    completeResearchSession: tool({
+      description: `Finalize a research session with a comprehensive summary. After completing a session, you MUST analyze what you've learned, identify knowledge gaps in your system prompt, and plan your next research session. If unclear about priorities, use askUser to seek guidance before starting a new session. This is part of your continuous research process - do NOT stop after completing one session.`,
+      inputSchema: z.object({
+        summary: z.string().describe('Comprehensive markdown summary synthesizing all findings from this research session. Include key insights, citations, and structured information.'),
+      }),
+      execute: async ({ summary }) => {
+        if (!currentSessionId) {
+          return { success: false, error: 'No active session' };
+        }
+        await completeResearchSessionStep(currentSessionId, summary);
+        const completedId = currentSessionId;
+        currentSessionId = null;
+        researchStarted = false;
+        researchSessionCompleted = true;
+        return { success: true, session_id: completedId };
+      },
+    }),
+
+    askUser: tool({
+      description: 'Ask the user a question when you need clarification, especially about research priorities or directions. The workflow will pause until answered.',
+      inputSchema: z.object({
+        question: z.string().describe('Your question to the user. Be specific about what you need clarification on, especially regarding research priorities or next steps.'),
+        priority: z.enum(['low', 'medium', 'high']).default('medium'),
+      }),
+      execute: async ({ question, priority }) => {
+        const { stepId } = getStepMetadata();
+        const activityId = await createPendingActivityStep(
+          agentId,
+          'user_input',
+          priority || 'medium',
+          { question }
+        );
+
+        await updateAgentStatusStep(agentId, {
+          status: 'active',
+          currentActivity: 'Waiting for user input',
+          currentTool: 'askUser',
+        });
+
+        const token = `agent-${agentId}-activity-${activityId}-step-${stepId}`;
+        
+        const [existingActivity] = await sql<any[]>`
+          SELECT status, payload FROM activities WHERE id = ${activityId}
+        `;
+        
+        if (existingActivity?.status === 'approved' && existingActivity?.payload?.answer) {
+          return { success: true, answer: existingActivity.payload.answer };
+        }
+
+        try {
+          const events = userInputHook.create({ token });
+          for await (const event of events) {
+            await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
+            return { success: true, answer: event.answer };
+          }
+        } catch (error: any) {
+          if (error?.name === 'MessageNotFoundError' || error?.message?.includes('not found')) {
+            const [recheckActivity] = await sql<any[]>`
+              SELECT status, payload FROM activities WHERE id = ${activityId}
+            `;
+            if (recheckActivity?.status === 'approved' && recheckActivity?.payload?.answer) {
+              return { success: true, answer: recheckActivity.payload.answer };
+            }
+            return { success: false, error: 'Failed to receive user input, please retry' };
+          }
+          throw error;
+        }
+        return { success: false, error: 'No user input received' };
+      },
+    }),
+
+    logActivity: tool({
+      description: 'Log a completed activity to the database',
+      inputSchema: z.object({
+        type: z.enum([
+          'research',
+          'email_sent',
+          'phone_call',
+          'webpage_viewed',
+          'journal_read',
+          'task_completed',
+          'agent_stopped',
+        ]),
+        payload: z.record(z.any()),
+      }),
+      execute: async ({ type, payload }) => {
+        await logActivityStep(agentId, type, payload || {});
+        return { success: true };
+      },
+    }),
+  };
+
+  // Add browser tool if enabled
+  if (args.enabledTools.includes('browser')) {
+    tools.browserTask = tool({
+      description: 'Execute a browser automation task',
+      inputSchema: z.object({
+        task: z.string(),
+        maxSteps: z.number().int().min(1).max(20).default(10),
+      }),
+      execute: async ({ task, maxSteps }) => {
+        return await executeBrowserStep(agentId, task, maxSteps);
+      },
+    });
+  }
+
+  // Use AI SDK's generateText with maxSteps - this should automatically create steps
+  console.log(`[executeLLMDecisionStepV2] Starting with ${messages.length} messages`);
+  console.log(`[executeLLMDecisionStepV2] System prompt length: ${systemPrompt.length} chars`);
+  console.log(`[executeLLMDecisionStepV2] Using AI SDK generateText with maxSteps=40`);
+
+  try {
+    const { stepCountIs } = await import('ai');
+    const result = await generateText({
+      model: openai('gpt-5-2025-08-07'),
+      system: systemPrompt,
+      messages,
+      tools,
+      stopWhen: stepCountIs(40), // Use stopWhen instead of maxSteps
+      experimental_context: {
+        agentId,
+        get currentSessionId() { return currentSessionId },
+      },
+    });
+
+    console.log(`[executeLLMDecisionStepV2] Completed with finishReason: ${result.finishReason}`);
+    console.log(`[executeLLMDecisionStepV2] Steps used: ${result.steps?.length || 0}`);
+
+    // Check if research session was completed by checking if currentSessionId was cleared
+    // (completeResearchSession sets currentSessionId to null)
+    const sessionWasCompleted = args.currentSessionId && !currentSessionId;
+    if (sessionWasCompleted) {
+      researchSessionCompleted = true;
+    }
+
+    // Return serializable data only
+    return {
+      finishReason: result.finishReason || 'stop',
+      currentSessionId,
+      researchStarted,
+      researchSessionCompleted,
+    };
+  } catch (error) {
+    console.error('[executeLLMDecisionStepV2] Error:', error);
+    throw error;
+  }
+}
+
+/**
  * Execute one LLM decision cycle using raw OpenAI API (bypassing AI SDK tool wrappers).
  * Returns serializable state deltas and finish reason.
  */
@@ -396,6 +623,7 @@ export async function executeLLMDecisionStep(args: {
 
   const { agentId, systemPrompt, history, researchContext, memoryContext, userPrompt } = args;
   let { currentSessionId, researchStarted } = args;
+  let researchSessionCompleted = false;
 
   // Use raw OpenAI SDK to avoid AI SDK serialization issues
   const { default: OpenAI } = await import('openai');
@@ -441,11 +669,14 @@ export async function executeLLMDecisionStep(args: {
       type: 'function',
       function: {
         name: 'completeResearchSession',
-        description: 'Finalize a research session with a summary',
+        description: `Finalize a research session with a comprehensive summary. After completing a session, you MUST analyze what you've learned, identify knowledge gaps in your system prompt, and plan your next research session. If unclear about priorities, use askUser to seek guidance before starting a new session. This is part of your continuous research process - do NOT stop after completing one session.`,
         parameters: {
           type: 'object',
           properties: {
-            summary: { type: 'string' },
+            summary: { 
+              type: 'string',
+              description: 'Comprehensive markdown summary synthesizing all findings from this research session. Include key insights, citations, and structured information.',
+            },
           },
           required: ['summary'],
           additionalProperties: false,
@@ -488,11 +719,14 @@ export async function executeLLMDecisionStep(args: {
       type: 'function',
       function: {
         name: 'askUser',
-        description: 'Ask the user a question; pause until answered',
+        description: 'Ask the user a question when you need clarification, especially about research priorities or directions. Use this when: (1) you\'ve completed a research session and need guidance on what to research next, (2) you\'re unsure which research direction to pursue, (3) multiple valid research paths exist and you need user preference. The workflow will pause until answered. DO NOT ask questions only in text - use this tool.',
         parameters: {
           type: 'object',
           properties: {
-            question: { type: 'string' },
+            question: { 
+              type: 'string',
+              description: 'Your question to the user. Be specific about what you need clarification on, especially regarding research priorities or next steps.',
+            },
             priority: { type: 'string', enum: ['low', 'medium', 'high'], default: 'medium' },
           },
           required: ['question'],
@@ -539,7 +773,7 @@ export async function executeLLMDecisionStep(args: {
   // Multi-turn conversation loop (like AI SDK maxSteps behavior)
   const conversationMessages = [...messages];
   let lastFinishReason = 'stop';
-  const maxTurns = 5; // Allow up to 5 tool call rounds per workflow step
+  const maxTurns = 40; // Allow up to 40 tool call rounds per workflow step
   
   // Log initial state for debugging
   console.log(`[executeLLMDecisionStep] Starting with ${conversationMessages.length} messages`);
@@ -623,6 +857,7 @@ export async function executeLLMDecisionStep(args: {
             const completedId = currentSessionId;
             currentSessionId = null;
             researchStarted = false;
+            researchSessionCompleted = true; // Mark that a session was just completed
             result = { success: true, session_id: completedId };
           }
           break;
@@ -726,6 +961,7 @@ export async function executeLLMDecisionStep(args: {
     finishReason: lastFinishReason,
     currentSessionId,
     researchStarted,
+    researchSessionCompleted,
   };
 }
 
