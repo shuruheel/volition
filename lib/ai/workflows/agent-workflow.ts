@@ -18,7 +18,6 @@ import {
   clearAgentStatusStep,
   logActivityStep,
   executeLLMDecisionStep,
-  executeLLMDecisionStepV2, // TEST: New AI SDK version
   autoCompleteResearchSessionStep,
 } from './steps';
 
@@ -78,14 +77,9 @@ export async function agentTaskWorkflow(
         currentActivity: `Step ${currentStep + 1}/${maxSteps}`,
       });
 
-      // TEST: Use V2 (AI SDK) instead of V1 (raw OpenAI)
-      // Set USE_AI_SDK_WORKFLOW=true to test the new pattern
-      const useAISDK = process.env.USE_AI_SDK_WORKFLOW === 'true';
-      const executeStep = useAISDK ? executeLLMDecisionStepV2 : executeLLMDecisionStep;
-      
       // Execute one LLM decision inside a step (tools are defined in the step)
       // Ensure all arguments are serializable by deep cloning through JSON
-      const result = await executeStep({
+      const result = await executeLLMDecisionStep({
         agentId: String(agentId),
         systemPrompt: String(systemPrompt),
         history: JSON.parse(JSON.stringify(history)),
