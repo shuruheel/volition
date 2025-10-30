@@ -649,6 +649,7 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'askUser': {
+          const { stepId } = getStepMetadata();
           const activityId = await createPendingActivityStep(
             agentId,
             'user_input',
@@ -662,13 +663,42 @@ export async function executeLLMDecisionStep(args: {
             currentTool: 'askUser',
           });
 
-          const token = `agent-${agentId}-activity-${activityId}`;
-          const events = userInputHook.create({ token });
-
-          for await (const event of events) {
-            await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
-            result = { success: true, answer: event.answer };
-            break;
+          // Use stepId in token for idempotency
+          const token = `agent-${agentId}-activity-${activityId}-step-${stepId}`;
+          
+          // Check if activity is already approved (in case of replay)
+          const [existingActivity] = await sql<any[]>`
+            SELECT status, payload FROM activities WHERE id = ${activityId}
+          `;
+          
+          if (existingActivity?.status === 'approved' && existingActivity?.payload?.answer) {
+            // Already answered, return existing answer
+            result = { success: true, answer: existingActivity.payload.answer };
+          } else {
+            // Wait for user input via hook
+            try {
+              const events = userInputHook.create({ token });
+              for await (const event of events) {
+                await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
+                result = { success: true, answer: event.answer };
+                break;
+              }
+            } catch (error: any) {
+              // Handle MessageNotFoundError - message was already consumed, check activity status
+              if (error?.name === 'MessageNotFoundError' || error?.message?.includes('not found')) {
+                const [recheckActivity] = await sql<any[]>`
+                  SELECT status, payload FROM activities WHERE id = ${activityId}
+                `;
+                if (recheckActivity?.status === 'approved' && recheckActivity?.payload?.answer) {
+                  result = { success: true, answer: recheckActivity.payload.answer };
+                } else {
+                  // Still pending, might be a transient error
+                  result = { success: false, error: 'Failed to receive user input, please retry' };
+                }
+              } else {
+                throw error;
+              }
+            }
           }
           break;
         }
