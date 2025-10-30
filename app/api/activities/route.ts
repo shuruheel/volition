@@ -86,7 +86,14 @@ export async function GET(request: NextRequest) {
     }
     
     // Hide in-progress research session scaffolding (no chat acknowledgment)
-    const filtered = (activities || []).filter((a: any) => a.type !== 'research' || !!(a.payload && a.payload.chatAck))
+    const filtered = (activities || []).filter((a: any) => {
+      // Show research activities if they have chatAck OR if they're completed with a summary
+      if (a.type === 'research') {
+        return !!(a.payload && a.payload.chatAck) || 
+               (a.status === 'completed' && a.payload && a.payload.summary);
+      }
+      return true;
+    });
     return NextResponse.json(filtered);
   } catch (error) {
     console.error('Failed to fetch activities:', error);

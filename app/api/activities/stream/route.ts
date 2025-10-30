@@ -63,8 +63,14 @@ export async function GET(request: NextRequest) {
       `
     }
 
-    // Filter research to only chat acknowledgements, if present
-    rows = rows.filter((r) => (r.type !== 'research') || !!(r.payload && (r.payload as any).chatAck))
+    // Filter research activities: show if they have chatAck OR if they're completed with a summary
+    rows = rows.filter((r) => {
+      if (r.type === 'research') {
+        return !!(r.payload && (r.payload as any).chatAck) || 
+               (r.status === 'completed' && r.payload && (r.payload as any).summary);
+      }
+      return true;
+    });
     return rows
   }
 

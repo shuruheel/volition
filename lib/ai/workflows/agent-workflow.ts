@@ -18,6 +18,7 @@ import {
   clearAgentStatusStep,
   logActivityStep,
   executeLLMDecisionStep,
+  completeResearchSessionStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -115,6 +116,31 @@ export async function agentTaskWorkflow(
     }
 
     console.log(`[Workflow] Completed after ${currentStep} steps`);
+
+    // Auto-complete research session if workflow ends without explicit completion
+    if (currentSessionId) {
+      try {
+        const { sql } = await import('@/lib/db');
+        const [row] = await sql<any[]>`
+          SELECT payload, status FROM activities WHERE id = ${currentSessionId}
+        `;
+        if (row && row.status !== 'completed') {
+          const payload = (row.payload ?? {}) as Record<string, any>;
+          const notes: string[] = Array.isArray(payload.notes) ? payload.notes : [];
+          const queries: string[] = Array.isArray(payload.queries) ? payload.queries : [];
+          
+          // Only auto-complete if there's actual research content
+          if (notes.length > 0 || queries.length > 0) {
+            const { generateSummary } = await import('@/lib/ai/utils');
+            const summary = await generateSummary(notes.join('\n\n'), `Queries: ${queries.join('; ')}`);
+            await completeResearchSessionStep(currentSessionId, summary);
+            console.log(`[Workflow] Auto-completed research session ${currentSessionId}`);
+          }
+        }
+      } catch (e) {
+        console.error('[Workflow] Auto-complete research session failed:', e);
+      }
+    }
 
     // Mark agent as idle
     await clearAgentStatusStep(agentId);
