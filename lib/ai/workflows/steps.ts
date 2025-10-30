@@ -53,10 +53,12 @@ ${systemPrompt ? `\nAgent's Research Goals (from system prompt): ${systemPrompt.
 ${existingResearchSummary}
 
 Requirements:
-- Each query should be focused and specific (not too broad, not too narrow)
+- Each query should be 5-12 words (NOT longer - Firecrawl works best with concise queries)
+- Remove quotes and complex operators - use simple keyword combinations
+- Focus on the most important keywords from the topic
 - Queries should explore different angles of the topic
 - Avoid queries that would duplicate existing research
-- Use search-friendly language with relevant keywords
+- Use search-friendly language (e.g., "context engineering techniques 2024" not "context engineering" "system prompt" instruction hierarchy)
 - Prioritize queries that fill knowledge gaps or explore new aspects
 - Return 3-5 queries total
 

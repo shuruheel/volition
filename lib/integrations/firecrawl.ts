@@ -58,7 +58,8 @@ async function doFetch<T>(path: string, init: RequestInit): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     const status = res.status;
-    const err = new Error(`Firecrawl ${path} failed (${status}): ${text}`);
+    console.error(`[Firecrawl] API error: ${path} returned ${status}`, text.substring(0, 500));
+    const err = new Error(`Firecrawl ${path} failed (${status}): ${text.substring(0, 200)}`);
     // Surface 429/403 explicitly for caller fallbacks
     // @ts-expect-error add status
     (err as any).status = status;
@@ -151,8 +152,21 @@ export interface SearchAndScrapeResult {
 }
 
 export async function searchAndScrape(params: SearchAndScrapeParams): Promise<SearchAndScrapeResult> {
+  // Simplify query: remove quotes, limit length, focus on key terms
+  let simplifiedQuery = params.query
+    .replace(/"/g, '') // Remove quotes
+    .replace(/\s+/g, ' ') // Normalize whitespace
+    .trim()
+    .substring(0, 200); // Limit to 200 chars
+  
+  // If query is still too complex, extract first 10 words
+  const words = simplifiedQuery.split(' ');
+  if (words.length > 15) {
+    simplifiedQuery = words.slice(0, 15).join(' ');
+  }
+
   const body: any = {
-    query: params.query,
+    query: simplifiedQuery,
     limit: Math.min(Math.max(params.limit ?? 3, 1), 10),
     sources: params.sources,
     categories: params.categories,
@@ -167,9 +181,18 @@ export async function searchAndScrape(params: SearchAndScrapeParams): Promise<Se
     };
   }
 
+  console.log(`[Firecrawl] Searching with simplified query: "${simplifiedQuery}" (original: "${params.query.substring(0, 100)}...")`);
+
   const json = await doFetch<any>('/search', {
     method: 'POST',
     body: JSON.stringify(body),
+  });
+
+  console.log(`[Firecrawl] Response structure:`, {
+    hasData: !!json?.data,
+    dataIsArray: Array.isArray(json?.data),
+    dataKeys: json?.data && typeof json?.data === 'object' ? Object.keys(json?.data) : 'N/A',
+    rawDataLength: Array.isArray(json?.data) ? json.data.length : 'N/A',
   });
 
   // When scrapeOptions are provided, Firecrawl returns an array in data
@@ -186,6 +209,9 @@ export async function searchAndScrape(params: SearchAndScrapeParams): Promise<Se
       metadata: it.metadata,
     });
   }
+  
+  console.log(`[Firecrawl] Parsed ${items.length} items from ${data.length} raw results`);
+  
   return { items };
 }
 
