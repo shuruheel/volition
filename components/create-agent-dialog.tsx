@@ -16,25 +16,33 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Plus } from "lucide-react"
 import { ToolPermissionsSelector } from "./tool-permissions-selector"
-import type { AgentTool } from "@/lib/auth"
 
 interface CreateAgentDialogProps {
-  onCreateAgent: (name: string, prompt: string, tools: AgentTool[]) => void
+  onCreateAgent: (name: string, prompt: string, tools: string[]) => void | Promise<void>
 }
 
 export function CreateAgentDialog({ onCreateAgent }: CreateAgentDialogProps) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [prompt, setPrompt] = useState("")
-  const [selectedTools, setSelectedTools] = useState<AgentTool[]>(["browser", "search", "neo4j"])
+  const [selectedTools, setSelectedTools] = useState<string[]>(['openai', 'supermemory'])
+  const [loading, setLoading] = useState(false)
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (name.trim() && prompt.trim()) {
-      onCreateAgent(name, prompt, selectedTools)
-      setName("")
-      setPrompt("")
-      setSelectedTools(["browser", "search", "neo4j"])
-      setOpen(false)
+      setLoading(true)
+      try {
+        await onCreateAgent(name, prompt, selectedTools)
+        // Reset form
+        setName("")
+        setPrompt("")
+        setSelectedTools(['openai', 'supermemory'])
+        setOpen(false)
+      } catch (error) {
+        console.error('Failed to create agent:', error)
+      } finally {
+        setLoading(false)
+      }
     }
   }
 
@@ -68,7 +76,7 @@ export function CreateAgentDialog({ onCreateAgent }: CreateAgentDialogProps) {
             <Label htmlFor="prompt">Agent Prompt</Label>
             <Textarea
               id="prompt"
-              placeholder="e.g., Research latest developments in AI safety and summarize key findings from academic papers"
+              placeholder="e.g., You are a helpful research assistant that can search the web, store information in memory, and provide insights."
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               className="bg-secondary border-border min-h-[100px]"
@@ -82,11 +90,11 @@ export function CreateAgentDialog({ onCreateAgent }: CreateAgentDialogProps) {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={loading}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={!name.trim() || !prompt.trim() || selectedTools.length === 0}>
-            Create Agent
+          <Button onClick={handleCreate} disabled={!name.trim() || !prompt.trim() || loading}>
+            {loading ? 'Creating...' : 'Create Agent'}
           </Button>
         </DialogFooter>
       </DialogContent>

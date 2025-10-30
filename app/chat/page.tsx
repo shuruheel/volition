@@ -8,9 +8,10 @@ import { ChatMessage } from "@/components/chat-message"
 import { ChatInput } from "@/components/chat-input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { MOCK_AGENTS } from "@/lib/mock-data"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
+
+interface AgentLite { id: string; name: string; status: 'idle'|'active'|'paused'|'error' }
 
 interface Message {
   id: string
@@ -19,25 +20,11 @@ interface Message {
   timestamp: Date
 }
 
-const MOCK_RESPONSES = [
-  "I'm analyzing the data you provided. Let me process this information and update the knowledge graph.",
-  "Based on my research, I've found several relevant papers on this topic. Would you like me to summarize them?",
-  "I've completed the task and added 3 new reasoning chains to the knowledge graph.",
-  "I'm currently processing 5 websites related to your query. This may take a few moments.",
-  "I've sent outreach emails to 8 potential contacts. I'll monitor for responses.",
-]
-
 export default function ChatPage() {
   const router = useRouter()
-  const [selectedAgentId, setSelectedAgentId] = useState<string>(MOCK_AGENTS[0]?.id || "")
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "agent",
-      content: "Hello! I'm ready to assist you. What would you like me to work on?",
-      timestamp: new Date(),
-    },
-  ])
+  const [agents, setAgents] = useState<AgentLite[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("")
+  const [messages, setMessages] = useState<Message[]>([])
   const [isTyping, setIsTyping] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -48,6 +35,68 @@ export default function ChatPage() {
     }
   }, [router])
 
+  // Load agents
+  useEffect(() => {
+    fetch('/api/agents')
+      .then(res => res.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data.agents || [])
+        setAgents(list)
+        if (!selectedAgentId && list[0]?.id) setSelectedAgentId(list[0].id)
+      })
+      .catch(console.error)
+  }, [])
+
+  // Poll activities to build messages
+  useEffect(() => {
+    if (!selectedAgentId) return
+    let mounted = true
+
+    const load = async () => {
+      const types = ['user_input','user_message','post_call_summary']
+      const params = new URLSearchParams({ agentId: selectedAgentId, types: types.join(','), limit: '100' })
+      const res = await fetch(`/api/activities?${params.toString()}`)
+      const items = await res.json()
+      if (!mounted) return
+      const msgs: Message[] = items
+        .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        .flatMap((a: any) => {
+          if (a.type === 'user_input') {
+            const out: Message[] = [{
+              id: a.id,
+              role: 'agent',
+              content: a.payload?.question || 'The agent is asking for more information.',
+              timestamp: new Date(a.created_at),
+            }]
+            if (a.status !== 'pending' && a.payload?.answer) {
+              out.push({ id: a.id+':answer', role: 'user', content: a.payload.answer, timestamp: new Date(a.created_at) })
+            }
+            return out
+          }
+          if (a.type === 'user_message') {
+            return [{ id: a.id, role: 'user', content: a.payload?.content || '', timestamp: new Date(a.created_at) }]
+          }
+          // Map other agent notifications as agent messages (read-only)
+          // show research only when flagged as chat acknowledgement
+          if (a.type === 'research' && a.payload?.chatAck) {
+            const content = a.payload?.content || 'Okay, proceeding.'
+            return [{ id: a.id, role: 'agent', content, timestamp: new Date(a.created_at) }]
+          }
+          if (a.type === 'post_call_summary') {
+            const content = a.payload?.summary || 'Call summary'
+            return [{ id: a.id, role: 'agent', content, timestamp: new Date(a.created_at) }]
+          }
+          return []
+        })
+      setMessages(msgs)
+      setIsTyping(false)
+    }
+
+    load()
+    const t = setInterval(load, 3000)
+    return () => { mounted = false; clearInterval(t) }
+  }, [selectedAgentId])
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -55,31 +104,41 @@ export default function ChatPage() {
   }, [messages])
 
   const handleSendMessage = async (content: string) => {
-    const userMessage: Message = {
-      id: String(Date.now()),
-      role: "user",
-      content,
-      timestamp: new Date(),
-    }
-
-    setMessages((prev) => [...prev, userMessage])
+    if (!selectedAgentId) return
     setIsTyping(true)
-
-    // Simulate agent response
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
-    const agentMessage: Message = {
-      id: String(Date.now() + 1),
-      role: "agent",
-      content: MOCK_RESPONSES[Math.floor(Math.random() * MOCK_RESPONSES.length)],
-      timestamp: new Date(),
+    try {
+      // Try to answer latest pending user_input by modify + approve
+      const params = new URLSearchParams({ agentId: selectedAgentId, types: 'user_input', status: 'pending', limit: '1' })
+      const pendingRes = await fetch(`/api/activities?${params.toString()}`)
+      const pending = await pendingRes.json()
+      const latest = Array.isArray(pending) && pending[0]
+      if (latest) {
+        const newPayload = { ...(latest.payload || {}), answer: content }
+        await fetch(`/api/activities/${latest.id}/modify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payload: newPayload }),
+        })
+        await fetch(`/api/activities/${latest.id}/approve`, { method: 'POST' })
+      } else {
+        // Else, store as standalone user_message
+        await fetch('/api/activities', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent_id: selectedAgentId,
+            type: 'user_message',
+            status: 'completed',
+            payload: { content },
+          }),
+        })
+      }
+    } finally {
+      setIsTyping(false)
     }
-
-    setMessages((prev) => [...prev, agentMessage])
-    setIsTyping(false)
   }
 
-  const selectedAgent = MOCK_AGENTS.find((a) => a.id === selectedAgentId)
+  const selectedAgent = agents.find((a) => a.id === selectedAgentId)
 
   const statusColors = {
     active: "bg-green-500/10 text-green-500 border-green-500/20",
@@ -109,7 +168,7 @@ export default function ChatPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {MOCK_AGENTS.map((agent) => (
+                  {agents.map((agent) => (
                     <SelectItem key={agent.id} value={agent.id}>
                       {agent.name}
                     </SelectItem>
@@ -137,29 +196,9 @@ export default function ChatPage() {
                       agentName={selectedAgent?.name}
                     />
                   ))}
-                  {isTyping && (
-                    <div className="flex gap-3 mb-4">
-                      <div className="h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 bg-primary/10">
-                        <div className="flex gap-1">
-                          <div
-                            className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
-                            style={{ animationDelay: "0ms" }}
-                          />
-                          <div
-                            className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
-                            style={{ animationDelay: "150ms" }}
-                          />
-                          <div
-                            className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
-                            style={{ animationDelay: "300ms" }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </ScrollArea>
-              <ChatInput onSend={handleSendMessage} disabled={isTyping} />
+              <ChatInput onSend={handleSendMessage} disabled={isTyping || !selectedAgentId} />
             </CardContent>
           </Card>
         </div>

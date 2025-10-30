@@ -1,0 +1,640 @@
+---
+description: Frontend component patterns, activity filtering, and UI conventions
+globs: components/**/*.tsx,app/**/*.tsx
+---
+# Frontend Components & UI Patterns
+
+## Component Architecture
+
+This project uses:
+- **React 18+** with Next.js 16 App Router
+- **shadcn/ui** for UI components
+- **Tailwind CSS** for styling
+- **TypeScript** for type safety
+
+## Component Structure
+
+```
+components/
+├── ui/                          # shadcn/ui primitives
+│   ├── button.tsx
+│   ├── card.tsx
+│   ├── dialog.tsx
+│   └── ...
+├── unified-activity-card.tsx    # Main activity display
+├── activity-card.tsx            # Base activity card
+├── *-activity-card.tsx          # Specific activity variants
+├── metric-card.tsx              # Dashboard metrics
+├── agent-card.tsx               # Agent display
+├── tool-permissions-selector.tsx # Tool selection UI
+├── chat-drawer.tsx              # Chat interface
+└── knowledge-graph.tsx          # Graph visualization
+```
+
+## Activity Feed System
+
+### Activity Types (Filtered)
+
+**Include in feed:**
+- `research` - Research tasks
+- `email_sent` - Emails sent (future Composio)
+- `phone_call` - Phone calls via Twilio
+- `calendar_event_created` - Calendar events created
+- `calendar_event_updated` - Calendar events updated
+- `webpage_viewed` - Webpages visited
+- `journal_read` - Journal entries
+
+**Exclude from feed:**
+- `video_watched` - Too high frequency
+- `financial` - Deferred to v2
+- `image_seen` - Too high frequency
+- `email_read` - Noise (only show sent)
+
+### Unified Activity Card
+
+```typescript
+// components/unified-activity-card.tsx
+import { Card } from '@/components/ui/card';
+
+interface ActivityCardProps {
+  activity: {
+    id: string;
+    type: 'research' | 'email_sent' | 'phone_call' | 'calendar_event_created' | 'webpage_viewed' | 'journal_read';
+    status: 'pending' | 'approved' | 'completed' | 'rejected';
+    priority: number;
+    created_at: string;
+    payload: Record<string, any>;
+  };
+  onApprove?: (id: string) => void;
+  onReject?: (id: string) => void;
+}
+
+export function UnifiedActivityCard({ activity, onApprove, onReject }: ActivityCardProps) {
+  // Render different UI based on activity.type
+  switch (activity.type) {
+    case 'research':
+      return <ResearchActivityCard activity={activity} />;
+    
+    case 'phone_call':
+      return <PhoneActivityCard activity={activity} onApprove={onApprove} />;
+    
+    case 'email_sent':
+      return <EmailActivityCard activity={activity} />;
+    
+    // ... other types
+    
+    default:
+      return <ActivityCard activity={activity} />;
+  }
+}
+```
+
+### Activity List with Filtering
+
+```typescript
+// app/dashboard/page.tsx or app/dashboard/[agentId]/page.tsx
+import { UnifiedActivityCard } from '@/components/unified-activity-card';
+
+export default async function DashboardPage() {
+  // Fetch activities with type filtering
+  const response = await fetch('/api/activities?types=research,email_sent,phone_call,calendar_event_created,webpage_viewed,journal_read');
+  const { activities } = await response.json();
+  
+  return (
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold">Activity Feed</h2>
+      
+      {activities.length === 0 ? (
+        <p className="text-muted-foreground">No activities yet</p>
+      ) : (
+        <div className="space-y-3">
+          {activities.map((activity) => (
+            <UnifiedActivityCard
+              key={activity.id}
+              activity={activity}
+              onApprove={handleApprove}
+              onReject={handleReject}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Metric Cards
+
+### Key Metrics (7 total)
+
+```typescript
+// components/metric-card.tsx
+interface MetricCardProps {
+  title: string;
+  value: string | number;
+  icon: React.ReactNode;
+  trend?: {
+    value: number;
+    isPositive: boolean;
+  };
+  onClick?: () => void;
+}
+
+export function MetricCard({ title, value, icon, trend, onClick }: MetricCardProps) {
+  return (
+    <Card className="p-6 cursor-pointer hover:shadow-md transition-shadow" onClick={onClick}>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground">{title}</p>
+          <h3 className="text-3xl font-bold mt-2">{value}</h3>
+          {trend && (
+            <p className={`text-sm mt-1 ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
+              {trend.isPositive ? '↑' : '↓'} {Math.abs(trend.value)}% from yesterday
+            </p>
+          )}
+        </div>
+        <div className="text-4xl opacity-20">{icon}</div>
+      </div>
+    </Card>
+  );
+}
+```
+
+### Dashboard Metrics
+
+```typescript
+// app/dashboard/page.tsx
+import { MetricCard } from '@/components/metric-card';
+import { DollarSign, Activity, Clock, Brain, Zap, Mail, Phone } from 'lucide-react';
+
+export default async function Dashboard() {
+  const response = await fetch('/api/metrics/key');
+  const metrics = await response.json();
+  
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <MetricCard
+        title="Total Spend"
+        value={`$${metrics.totalSpend.toFixed(2)}`}
+        icon={<DollarSign />}
+      />
+      
+      <MetricCard
+        title="Active Tasks"
+        value={metrics.activeTasks}
+        icon={<Activity />}
+      />
+      
+      <MetricCard
+        title="Pending Approvals"
+        value={metrics.pendingApprovals}
+        icon={<Clock />}
+      />
+      
+      <MetricCard
+        title="Memories Added"
+        value={metrics.memoriesAdded}
+        icon={<Brain />}
+      />
+      
+      <MetricCard
+        title="Actions Done"
+        value={metrics.actionsDone}
+        icon={<Zap />}
+      />
+      
+      <MetricCard
+        title="Emails Sent"
+        value={metrics.emailsSent}
+        icon={<Mail />}
+      />
+      
+      <MetricCard
+        title="Calls Made"
+        value={metrics.callsMade}
+        icon={<Phone />}
+      />
+    </div>
+  );
+}
+```
+
+**Removed metrics:**
+- Success Rate
+- Errors
+
+## Tool Permissions Selector
+
+### Simplified UI (No Templates)
+
+```typescript
+// components/tool-permissions-selector.tsx
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+
+interface ToolPermissionsSelectorProps {
+  selectedTools: string[];
+  onChange: (tools: string[]) => void;
+}
+
+const AVAILABLE_TOOLS = [
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    description: 'GPT models for text generation',
+    category: 'AI Models',
+  },
+  {
+    id: 'supermemory',
+    name: 'Supermemory',
+    description: 'Long-term memory and context',
+    category: 'Memory',
+  },
+  {
+    id: 'browser_use',
+    name: 'Browser Use',
+    description: 'Web automation and scraping',
+    category: 'Automation',
+  },
+  {
+    id: 'twilio',
+    name: 'Twilio',
+    description: 'Voice calls and SMS',
+    category: 'Communication',
+  },
+];
+
+export function ToolPermissionsSelector({ selectedTools, onChange }: ToolPermissionsSelectorProps) {
+  const toggleTool = (toolId: string) => {
+    if (selectedTools.includes(toolId)) {
+      onChange(selectedTools.filter(id => id !== toolId));
+    } else {
+      onChange([...selectedTools, toolId]);
+    }
+  };
+  
+  // Group by category
+  const grouped = AVAILABLE_TOOLS.reduce((acc, tool) => {
+    if (!acc[tool.category]) acc[tool.category] = [];
+    acc[tool.category].push(tool);
+    return acc;
+  }, {} as Record<string, typeof AVAILABLE_TOOLS>);
+  
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold mb-4">Tool Permissions</h3>
+        <p className="text-sm text-muted-foreground mb-4">
+          Select which tools this agent can access
+        </p>
+      </div>
+      
+      {Object.entries(grouped).map(([category, tools]) => (
+        <div key={category}>
+          <h4 className="text-sm font-medium mb-3 text-muted-foreground">{category}</h4>
+          <div className="space-y-3">
+            {tools.map((tool) => (
+              <div key={tool.id} className="flex items-center justify-between p-3 border rounded-lg">
+                <div>
+                  <Label htmlFor={tool.id} className="font-medium cursor-pointer">
+                    {tool.name}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">{tool.description}</p>
+                </div>
+                <Switch
+                  id={tool.id}
+                  checked={selectedTools.includes(tool.id)}
+                  onCheckedChange={() => toggleTool(tool.id)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+**Note:** Removed "Permission Templates" section as per plan.
+
+## Agent Creation Dialog
+
+```typescript
+// components/create-agent-dialog.tsx
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { ToolPermissionsSelector } from './tool-permissions-selector';
+import { useState } from 'react';
+
+export function CreateAgentDialog({ open, onOpenChange, onSuccess }: CreateAgentDialogProps) {
+  const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [tools, setTools] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  
+  const handleSubmit = async () => {
+    setLoading(true);
+    
+    try {
+      const response = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, prompt, tools }),
+      });
+      
+      if (!response.ok) throw new Error('Failed to create agent');
+      
+      const { agent } = await response.json();
+      onSuccess(agent);
+      onOpenChange(false);
+    } catch (error) {
+      console.error('Create agent error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Create New Agent</DialogTitle>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="name">Agent Name</Label>
+            <Input
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My AI Assistant"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="prompt">System Prompt</Label>
+            <Textarea
+              id="prompt"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="You are a helpful AI assistant that..."
+              rows={5}
+            />
+          </div>
+          
+          <ToolPermissionsSelector
+            selectedTools={tools}
+            onChange={setTools}
+          />
+          
+          <div className="flex justify-end gap-3 pt-4">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} disabled={loading || !name || !prompt}>
+              {loading ? 'Creating...' : 'Create Agent'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+## Settings Page
+
+### Tool Configuration UI
+
+```typescript
+// app/settings/page.tsx
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+
+export default function SettingsPage() {
+  const tools = [
+    { id: 'openai', name: 'OpenAI API Key', placeholder: 'sk-...' },
+    { id: 'supermemory', name: 'Supermemory API Key', placeholder: 'sm_...' },
+    { id: 'browser_use', name: 'Browser Use API Key', placeholder: 'bu_...' },
+    { id: 'twilio_sid', name: 'Twilio Account SID', placeholder: 'AC...' },
+    { id: 'twilio_token', name: 'Twilio Auth Token', placeholder: '••••••••' },
+  ];
+  
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold">Settings</h1>
+        <p className="text-muted-foreground mt-2">
+          Configure integrations and API keys
+        </p>
+      </div>
+      
+      <div className="grid gap-4">
+        {tools.map((tool) => (
+          <Card key={tool.id} className="p-6">
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor={tool.id}>{tool.name}</Label>
+                <Input
+                  id={tool.id}
+                  type="password"
+                  placeholder={tool.placeholder}
+                  className="mt-2"
+                />
+              </div>
+              
+              <div className="flex gap-3">
+                <Button variant="default" size="sm">
+                  Save
+                </Button>
+                <Button variant="outline" size="sm">
+                  Test Connection
+                </Button>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+## Phone Call Activity Card
+
+Special handling for phone calls with summaries:
+
+```typescript
+// components/phone-activity-card.tsx
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Phone } from 'lucide-react';
+
+interface PhoneActivityCardProps {
+  activity: {
+    id: string;
+    status: 'pending' | 'completed';
+    payload: {
+      toNumber?: string;
+      summary?: string;
+      duration?: number;
+    };
+    created_at: string;
+  };
+  onApprove?: (id: string) => void;
+}
+
+export function PhoneActivityCard({ activity, onApprove }: PhoneActivityCardProps) {
+  const isPending = activity.status === 'pending';
+  
+  return (
+    <Card className="p-4">
+      <div className="flex items-start gap-4">
+        <div className="p-3 bg-blue-100 rounded-lg">
+          <Phone className="w-6 h-6 text-blue-600" />
+        </div>
+        
+        <div className="flex-1">
+          <h4 className="font-semibold">Phone Call</h4>
+          {isPending ? (
+            <p className="text-sm text-muted-foreground mt-1">
+              Requesting to call {activity.payload.toNumber}
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground mt-1">
+                Call completed ({activity.payload.duration}s)
+              </p>
+              {activity.payload.summary && (
+                <p className="text-sm mt-2 p-3 bg-muted rounded-lg">
+                  {activity.payload.summary}
+                </p>
+              )}
+            </>
+          )}
+          
+          {isPending && onApprove && (
+            <div className="flex gap-2 mt-3">
+              <Button size="sm" onClick={() => onApprove(activity.id)}>
+                Approve Call
+              </Button>
+              <Button size="sm" variant="outline">
+                Reject
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+```
+
+## Live Status Indicator
+
+```typescript
+// components/live-status-indicator.tsx
+export function LiveStatusIndicator({ status }: { status: 'idle' | 'active' | 'paused' | 'error' }) {
+  const colors = {
+    idle: 'bg-gray-400',
+    active: 'bg-green-500',
+    paused: 'bg-yellow-500',
+    error: 'bg-red-500',
+  };
+  
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`w-2 h-2 rounded-full ${colors[status]} animate-pulse`} />
+      <span className="text-sm capitalize">{status}</span>
+    </div>
+  );
+}
+```
+
+## Best Practices
+
+### 1. Server Components by Default
+
+```typescript
+// Use Server Components for data fetching
+export default async function DashboardPage() {
+  const agents = await fetch('/api/agents').then(r => r.json());
+  
+  return (
+    <div>
+      {agents.map(agent => <AgentCard key={agent.id} agent={agent} />)}
+    </div>
+  );
+}
+```
+
+### 2. Client Components for Interactivity
+
+```typescript
+'use client';
+
+import { useState } from 'react';
+
+export function InteractiveComponent() {
+  const [count, setCount] = useState(0);
+  // ...
+}
+```
+
+### 3. Type Safety
+
+```typescript
+// Define types for all props
+interface AgentCardProps {
+  agent: {
+    id: string;
+    name: string;
+    status: 'idle' | 'active' | 'paused';
+  };
+  onClick?: (id: string) => void;
+}
+
+export function AgentCard({ agent, onClick }: AgentCardProps) {
+  // ...
+}
+```
+
+### 4. Accessibility
+
+- Use semantic HTML
+- Add aria labels
+- Support keyboard navigation
+- Use proper heading hierarchy
+
+### 5. Loading States
+
+```typescript
+export function DashboardPage() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <DashboardContent />
+    </Suspense>
+  );
+}
+```
+
+## Styling Conventions
+
+- Use Tailwind utility classes
+- Follow shadcn/ui patterns
+- Consistent spacing (4px increments)
+- Dark mode support via `dark:` classes
+- Responsive design (`sm:`, `md:`, `lg:` breakpoints)
+
+## Resources
+
+- [Next.js App Router](https://nextjs.org/docs/app)
+- [shadcn/ui Components](https://ui.shadcn.com)
+- [Tailwind CSS](https://tailwindcss.com/docs)
+- [React Patterns](https://react.dev/learn)

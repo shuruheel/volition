@@ -1,0 +1,523 @@
+---
+description: External service integration patterns (Supermemory, Browser-Use, Twilio)
+globs: app/api/**/*,lib/ai/tools/**/*
+---
+# External Service Integrations
+
+## Overview
+
+This project integrates three main external services:
+1. **Supermemory** - Memory and context management for AI
+2. **Browser-Use Cloud** - AI-powered browser automation
+3. **Twilio** - Voice calls with OpenAI Realtime API
+
+## Supermemory Integration
+
+### Setup
+
+```bash
+npm install @supermemory/tools supermemory
+```
+
+Documentation: [docs/supermemory/README.md](mdc:docs/supermemory/README.md)
+
+### AI SDK Tools Integration
+
+```typescript
+// lib/ai/agent.ts
+import { supermemoryTools } from '@supermemory/tools/ai-sdk';
+
+const tools = {
+  ...supermemoryTools(process.env.SUPERMEMORY_API_KEY!),
+  // Adds: search_memories, store_memory, list_memories, delete_memory
+};
+
+const agent = new ToolLoopAgent({
+  model: openai('gpt-4o'),
+  tools,
+  system: 'You are an AI assistant with long-term memory.',
+});
+```
+
+Reference: [docs/supermemory/memory-tools.md](mdc:docs/supermemory/memory-tools.md)
+
+### Manual API Usage
+
+```typescript
+// app/api/memories/store/route.ts
+import Supermemory from 'supermemory';
+
+const client = new Supermemory({
+  apiKey: process.env.SUPERMEMORY_API_KEY!,
+});
+
+export async function POST(request: Request) {
+  const { agentId, content, metadata } = await request.json();
+  
+  // Store memory
+  const memory = await client.documents.create({
+    content,
+    metadata: {
+      agentId,
+      ...metadata,
+    },
+  });
+  
+  // Save reference in database
+  await sql`
+    INSERT INTO memories (agent_id, provider_id, kind, metadata)
+    VALUES (${agentId}, ${memory.id}, 'document', ${JSON.stringify(metadata)})
+  `;
+  
+  return Response.json({ memory });
+}
+```
+
+### Search Memories
+
+```typescript
+// app/api/memories/search/route.ts
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const agentId = searchParams.get('agentId');
+  const query = searchParams.get('q');
+  
+  const results = await client.search.documents({
+    q: query,
+    filters: {
+      metadata: {
+        agentId,
+      },
+    },
+    limit: 10,
+  });
+  
+  return Response.json({ results });
+}
+```
+
+Reference: [docs/supermemory/ai-sdk-overview.md](mdc:docs/supermemory/ai-sdk-overview.md)
+
+## Browser-Use Cloud Integration
+
+### Setup
+
+```bash
+npm install browser-use-sdk
+```
+
+Documentation: [docs/browser-use/README.md](mdc:docs/browser-use/README.md)
+
+### AI SDK Tool
+
+```typescript
+// lib/ai/tools/browser-task.ts
+import { tool } from 'ai';
+import { z } from 'zod';
+import { BrowserUseClient } from 'browser-use-sdk';
+
+const client = new BrowserUseClient({
+  apiKey: process.env.BROWSER_USE_API_KEY!,
+});
+
+export const browserTaskTool = tool({
+  description: 'Execute browser automation tasks like web scraping, form filling, or data extraction',
+  
+  inputSchema: z.object({
+    task: z.string().describe('Natural language task description'),
+    maxSteps: z.number().default(10).describe('Maximum automation steps'),
+    schema: z.any().optional().describe('Zod schema for structured output'),
+    allowedDomains: z.array(z.string()).optional().describe('Domain whitelist'),
+  }),
+  
+  execute: async ({ task, maxSteps, schema, allowedDomains }) => {
+    try {
+      const browserTask = await client.tasks.createTask({
+        task,
+        maxSteps,
+        schema,
+        allowedDomains: allowedDomains ?? ['*'],
+      });
+      
+      // Stream progress (optional)
+      for await (const update of browserTask.stream()) {
+        console.log('Browser task update:', update.status);
+      }
+      
+      // Wait for completion
+      const result = await browserTask.complete();
+      
+      return {
+        success: true,
+        output: result.output,
+        parsed: result.parsed,
+        steps: result.steps.length,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  },
+});
+```
+
+Reference: [docs/browser-use/quickstart.md](mdc:docs/browser-use/quickstart.md)
+
+### API Endpoint
+
+```typescript
+// app/api/browser/task/route.ts
+export async function POST(request: Request) {
+  const { task, maxSteps, schema } = await request.json();
+  
+  const browserTask = await client.tasks.createTask({
+    task,
+    maxSteps,
+    schema,
+  });
+  
+  return Response.json({
+    taskId: browserTask.id,
+    liveUrl: browserTask.liveUrl, // Watch in real-time
+  });
+}
+
+// Get task status/result
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const taskId = searchParams.get('taskId');
+  
+  const task = await client.tasks.getTask(taskId);
+  
+  return Response.json({
+    status: task.status,
+    output: task.output,
+    parsed: task.parsed,
+  });
+}
+```
+
+### Advanced: Sessions and Profiles
+
+```typescript
+// Create persistent session
+const session = await client.sessions.createSession({
+  profileId: 'user_profile_123', // Persists cookies, login state
+});
+
+// Multi-step workflow
+const loginTask = await client.tasks.createTask({
+  sessionId: session.id,
+  task: 'Log into dashboard',
+});
+await loginTask.complete();
+
+// State is preserved
+const dataTask = await client.tasks.createTask({
+  sessionId: session.id,
+  task: 'Export user data',
+});
+const result = await dataTask.complete();
+```
+
+Reference: [docs/browser-use/concepts.md](mdc:docs/browser-use/concepts.md)
+
+## Twilio Voice Integration
+
+### Setup
+
+```bash
+npm install twilio
+```
+
+Documentation: [docs/twilio/README.md](mdc:docs/twilio/README.md)
+
+### Outbound Call Flow
+
+1. **Create call request** → User approves activity in dashboard
+2. **Initiate call** → POST /api/calls creates Twilio call
+3. **TwiML webhook** → POST /api/twilio/voice returns TwiML
+4. **WebSocket proxy** → Bridges Twilio Media Streams ↔ OpenAI Realtime
+5. **Status callback** → POST /api/twilio/status handles call lifecycle
+6. **Summarize call** → POST /api/calls/:id/summary generates summary
+
+### Initiate Call
+
+```typescript
+// app/api/calls/route.ts
+import twilio from 'twilio';
+
+const client = twilio(
+  process.env.TWILIO_ACCOUNT_SID!,
+  process.env.TWILIO_AUTH_TOKEN!
+);
+
+export async function POST(request: Request) {
+  const { agentId, toNumber, instructions } = await request.json();
+  
+  // Create call
+  const call = await client.calls.create({
+    to: toNumber,
+    from: process.env.TWILIO_PHONE_NUMBER!,
+    url: `${process.env.APP_URL}/api/twilio/voice`,
+    statusCallback: `${process.env.APP_URL}/api/twilio/status`,
+    statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+    // Pass context via URL params
+    url: `${process.env.APP_URL}/api/twilio/voice?agentId=${agentId}&callId=${call.sid}`,
+  });
+  
+  // Save to database
+  await sql`
+    INSERT INTO calls (agent_id, to_number, status, twilio_sid)
+    VALUES (${agentId}, ${toNumber}, 'initiated', ${call.sid})
+  `;
+  
+  return Response.json({ call });
+}
+```
+
+### TwiML Response
+
+```typescript
+// app/api/twilio/voice/route.ts
+import { VoiceResponse } from 'twilio/lib/twiml/VoiceResponse';
+
+export async function POST(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const agentId = searchParams.get('agentId');
+  const callId = searchParams.get('callId');
+  
+  const twiml = new VoiceResponse();
+  
+  // Connect to WebSocket for Realtime API
+  const connect = twiml.connect();
+  connect.stream({
+    url: `wss://${process.env.APP_URL}/api/twilio/stream?agentId=${agentId}&callId=${callId}`,
+  });
+  
+  return new Response(twiml.toString(), {
+    headers: { 'Content-Type': 'text/xml' },
+  });
+}
+```
+
+### WebSocket Proxy (Simplified)
+
+```typescript
+// app/api/twilio/stream/route.ts
+import { WebSocketServer } from 'ws';
+
+// This is simplified - actual implementation needs more setup
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const agentId = searchParams.get('agentId');
+  
+  // Upgrade to WebSocket
+  // Bridge Twilio Media Streams (g711 μ-law) <-> OpenAI Realtime API
+  
+  // See full implementation in docs/twilio/twilio-code-walkthrough.md
+}
+```
+
+Reference: [docs/twilio/openai-realtime-api.md](mdc:docs/twilio/openai-realtime-api.md)
+
+### Status Callbacks
+
+```typescript
+// app/api/twilio/status/route.ts
+export async function POST(request: Request) {
+  const formData = await request.formData();
+  
+  const callSid = formData.get('CallSid');
+  const callStatus = formData.get('CallStatus');
+  const duration = formData.get('CallDuration');
+  
+  await sql`
+    UPDATE calls
+    SET status = ${callStatus}, ended_at = NOW()
+    WHERE twilio_sid = ${callSid}
+  `;
+  
+  // If call completed, trigger summary generation
+  if (callStatus === 'completed') {
+    await generateCallSummary(callSid);
+  }
+  
+  return new Response('OK', { status: 200 });
+}
+```
+
+### Call Summary Generation
+
+```typescript
+// app/api/calls/[id]/summary/route.ts
+import { generateText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+
+export async function POST(
+  request: Request,
+  context: RouteContext<'/api/calls/[id]/summary'>
+) {
+  const { id } = await context.params;
+  
+  // Get call transcript (from buffered Realtime events)
+  const transcript = await getCallTranscript(id);
+  
+  // Generate summary with AI
+  const { text } = await generateText({
+    model: openai('gpt-4o'),
+    prompt: `Summarize this phone call transcript:\n\n${transcript}`,
+  });
+  
+  // Save summary
+  await sql`
+    UPDATE calls
+    SET summary = ${text}
+    WHERE id = ${id}
+  `;
+  
+  // Create activity for feed
+  await sql`
+    INSERT INTO activities (agent_id, type, status, payload)
+    SELECT agent_id, 'phone_call', 'completed', ${JSON.stringify({
+      callId: id,
+      summary: text,
+    })}
+    FROM calls WHERE id = ${id}
+  `;
+  
+  return Response.json({ summary: text });
+}
+```
+
+Reference: [docs/twilio/twilio-code-walkthrough.md](mdc:docs/twilio/twilio-code-walkthrough.md)
+
+## Tool Configuration Management
+
+### Store Encrypted Credentials
+
+```typescript
+// app/api/settings/tools/route.ts
+import { encrypt, decrypt } from '@/lib/crypto';
+
+export async function POST(request: Request) {
+  const { tool, credentials } = await request.json();
+  
+  // Encrypt credentials
+  const encrypted = await encrypt(JSON.stringify(credentials));
+  
+  await sql`
+    INSERT INTO tool_configs (user_id, tool, data_encrypted)
+    VALUES ('mock-user-id', ${tool}, ${encrypted})
+    ON CONFLICT (user_id, tool)
+    DO UPDATE SET data_encrypted = ${encrypted}, updated_at = NOW()
+  `;
+  
+  return Response.json({ success: true });
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const tool = searchParams.get('tool');
+  
+  const [config] = await sql`
+    SELECT data_encrypted FROM tool_configs
+    WHERE user_id = 'mock-user-id' AND tool = ${tool}
+  `;
+  
+  if (!config) {
+    return Response.json({ configured: false });
+  }
+  
+  // Return masked version
+  return Response.json({
+    configured: true,
+    masked: '••••••••',
+  });
+}
+```
+
+Reference: [lib/crypto.ts](mdc:lib/crypto.ts)
+
+### Test Tool Connectivity
+
+```typescript
+// app/api/settings/test/route.ts
+export async function POST(request: Request) {
+  const { tool } = await request.json();
+  
+  try {
+    switch (tool) {
+      case 'openai':
+        await fetch('https://api.openai.com/v1/models', {
+          headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
+        });
+        break;
+      
+      case 'supermemory':
+        const sm = new Supermemory({ apiKey: process.env.SUPERMEMORY_API_KEY! });
+        await sm.documents.list({ limit: 1 });
+        break;
+      
+      case 'browser_use':
+        const bu = new BrowserUseClient({ apiKey: process.env.BROWSER_USE_API_KEY! });
+        // Test API key validity
+        break;
+      
+      case 'twilio':
+        const tw = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!);
+        await tw.api.accounts.list({ limit: 1 });
+        break;
+    }
+    
+    return Response.json({ status: 'connected' });
+  } catch (error) {
+    return Response.json({ status: 'error', error: error.message }, { status: 500 });
+  }
+}
+```
+
+## Environment Variables
+
+All integration secrets should be in environment variables:
+
+```bash
+# .env.local
+
+# AI Models
+OPENAI_API_KEY=sk-...
+
+# Memory
+SUPERMEMORY_API_KEY=sm_...
+
+# Browser Automation
+BROWSER_USE_API_KEY=bu_...
+
+# Voice
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+1...
+
+# App
+APP_URL=https://your-app.vercel.app
+APP_ENCRYPTION_KEY=...  # 32-byte hex
+```
+
+## Security Best Practices
+
+1. **Never expose API keys client-side** - All integrations server-only
+2. **Encrypt at rest** - Use AES-GCM for stored credentials
+3. **Validate webhooks** - Always validate Twilio signatures
+4. **Domain allowlists** - Restrict Browser-Use to allowed domains
+5. **Rate limiting** - Implement rate limits for v2
+6. **Error handling** - Never leak API keys in error messages
+7. **Audit logs** - Log all integration usage
+
+## Resources
+
+- [Supermemory Docs](https://supermemory.ai/docs)
+- [Browser-Use Cloud Docs](https://docs.cloud.browser-use.com)
+- [Twilio Voice API](https://www.twilio.com/docs/voice)
+- [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime)
