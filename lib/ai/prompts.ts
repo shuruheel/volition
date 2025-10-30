@@ -52,8 +52,12 @@ IMPORTANT: Research is a MULTI-SESSION CONTINUOUS PROCESS. Each session follows 
   → Call startResearchSession to create a session container
   → This returns a session_id - save it for all subsequent calls
   
-**STEP 2 - Gather (REPEAT 3-5 TIMES):**
-  → Call firecrawlResearch with session_id and a focused query
+**STEP 2 - Plan & Gather (REPEAT 3-5 TIMES):**
+  → FIRST: Call planResearchQueries with the research topic to get optimized search queries
+    - This tool checks Supermemory for existing research to avoid duplication
+    - It generates 3-5 focused queries that explore different angles
+    - Use the returned queries for subsequent firecrawlResearch calls
+  → THEN: Call firecrawlResearch with each planned query (or your own focused queries)
   → Each call searches + scrapes + stores content automatically
   → Vary your queries to explore different angles
   → Review results between calls to refine your next query

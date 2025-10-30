@@ -10,6 +10,111 @@ import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
 import { getStepMetadata } from 'workflow';
 
 /**
+ * Plan research queries by decomposing a topic into focused search queries,
+ * checking Supermemory for existing research to avoid duplication
+ */
+export async function planResearchQueriesStep(
+  agentId: string,
+  researchTopic: string,
+  systemPrompt?: string
+): Promise<{ queries: string[]; existingResearch?: string }> {
+  'use step';
+
+  const { searchMemories } = await import('@/lib/integrations/supermemory');
+  
+  // Search Supermemory for existing research on this topic
+  console.log(`[planResearchQueriesStep] Searching memories for topic: "${researchTopic}"`);
+  const existingDocs = await searchMemories(agentId, researchTopic, 10);
+  
+  let existingResearchSummary = '';
+  if (existingDocs.length > 0) {
+    // Summarize existing research to guide query planning
+    const summaries = existingDocs.slice(0, 5).map((doc, idx) => {
+      const title = doc.metadata?.title || `Document ${idx + 1}`;
+      const url = doc.metadata?.url || '';
+      const preview = doc.content.slice(0, 300).replace(/\s+/g, ' ');
+      return `- ${title}${url ? ` (${url})` : ''}: ${preview}...`;
+    });
+    existingResearchSummary = `\n\nExisting research found in memory:\n${summaries.join('\n')}\n\nAvoid duplicating this research. Focus on gaps, new angles, or deeper dives into specific aspects.`;
+  } else {
+    existingResearchSummary = '\n\nNo existing research found in memory. You can explore this topic broadly.';
+  }
+
+  // Use LLM to decompose topic into focused search queries
+  const { default: OpenAI } = await import('openai');
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+  });
+
+  const planningPrompt = `You are a research query planner. Decompose the research topic into 3-5 focused, specific search queries that will yield high-quality results.
+
+Research Topic: ${researchTopic}
+${systemPrompt ? `\nAgent's Research Goals (from system prompt): ${systemPrompt.slice(0, 500)}` : ''}
+${existingResearchSummary}
+
+Requirements:
+- Each query should be focused and specific (not too broad, not too narrow)
+- Queries should explore different angles of the topic
+- Avoid queries that would duplicate existing research
+- Use search-friendly language with relevant keywords
+- Prioritize queries that fill knowledge gaps or explore new aspects
+- Return 3-5 queries total
+
+Return a JSON object with a "queries" array containing 3-5 search query strings. Example: {"queries": ["query 1", "query 2", "query 3"]}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-5-2025-08-07',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a research query planner. Always return a JSON object with a "queries" array property containing search query strings.',
+        },
+        { role: 'user', content: planningPrompt },
+      ],
+      response_format: { type: 'json_object' },
+    });
+
+    const responseText = completion.choices[0]?.message?.content || '{}';
+    const parsed = JSON.parse(responseText);
+    
+    // Extract queries from response (handle different formats)
+    let queries: string[] = [];
+    if (Array.isArray(parsed.queries)) {
+      queries = parsed.queries;
+    } else if (typeof parsed === 'object') {
+      // Try to find queries in any array property
+      const arrKeys = Object.keys(parsed).filter(k => Array.isArray(parsed[k]));
+      if (arrKeys.length > 0) {
+        queries = parsed[arrKeys[0]];
+      }
+    }
+
+    // Validate and clean queries
+    queries = queries
+      .filter((q: any) => typeof q === 'string' && q.trim().length > 0)
+      .map((q: string) => q.trim())
+      .slice(0, 5); // Limit to 5 queries max
+
+    if (queries.length === 0) {
+      // Fallback: create a simple query from the topic
+      queries = [researchTopic];
+    }
+
+    console.log(`[planResearchQueriesStep] Generated ${queries.length} queries:`, queries);
+    
+    return {
+      queries,
+      existingResearch: existingDocs.length > 0 ? existingResearchSummary : undefined,
+    };
+  } catch (error) {
+    console.error('[planResearchQueriesStep] Error planning queries:', error);
+    // Fallback: return topic as single query
+    return { queries: [researchTopic] };
+  }
+}
+
+/**
  * Execute a research step: search, scrape, and store content
  */
 export async function executeResearchStep(agentId: string, query: string, sessionId: string) {
@@ -425,8 +530,26 @@ export async function executeLLMDecisionStep(args: {
     {
       type: 'function',
       function: {
+        name: 'planResearchQueries',
+        description: 'Decompose a research topic into focused search queries. This tool checks Supermemory for existing research to avoid duplication and generates 3-5 high-quality search queries that explore different angles. Use this BEFORE calling firecrawlResearch to ensure better query quality and avoid redundant research.',
+        parameters: {
+          type: 'object',
+          properties: {
+            researchTopic: { 
+              type: 'string',
+              description: 'The research topic or title to decompose into focused search queries',
+            },
+          },
+          required: ['researchTopic'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
         name: 'firecrawlResearch',
-        description: 'Search and scrape the web; call multiple times with focused queries',
+        description: 'Search and scrape the web using a focused query. For best results, first use planResearchQueries to get optimized queries based on existing research. Call multiple times with different queries to explore various angles.',
         parameters: {
           type: 'object',
           properties: {
@@ -607,6 +730,16 @@ export async function executeLLMDecisionStep(args: {
           currentSessionId = res.session_id;
           researchStarted = false;
           result = { success: true, session_id: currentSessionId };
+          break;
+        }
+        case 'planResearchQueries': {
+          const planResult = await planResearchQueriesStep(agentId, args.researchTopic, systemPrompt);
+          result = {
+            success: true,
+            queries: planResult.queries,
+            existingResearch: planResult.existingResearch,
+            message: `Planned ${planResult.queries.length} focused queries. ${planResult.existingResearch ? 'Found existing research - queries are designed to avoid duplication and explore new angles.' : 'No existing research found - queries explore the topic broadly.'}`,
+          };
           break;
         }
         case 'firecrawlResearch': {

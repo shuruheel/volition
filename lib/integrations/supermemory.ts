@@ -73,4 +73,36 @@ export async function storeMarkdown({ agentId, url, title, markdown }: StoreMark
   }
 }
 
+/**
+ * Search Supermemory for relevant research documents
+ */
+export async function searchMemories(agentId: string, query: string, limit: number = 10): Promise<Array<{ id: string; content: string; metadata?: any }>> {
+  const apiKey = process.env.SUPERMEMORY_API_KEY
+  if (!apiKey) {
+    console.warn('[searchMemories] No Supermemory API key, returning empty results')
+    return []
+  }
+
+  try {
+    const sm = new Supermemory({ apiKey })
+    const results = await sm.search.documents({
+      q: query,
+      filters: { AND: [{ key: 'metadata.agentId', value: agentId }] },
+      limit,
+    })
+
+    console.log(`[searchMemories] Found ${results.items?.length || 0} relevant documents for query: "${query}"`)
+
+    return (results.items || []).map((item: any) => ({
+      id: item.id,
+      content: item.content || '',
+      metadata: item.metadata || {},
+    }))
+  } catch (error) {
+    console.error('[searchMemories] Error searching Supermemory:', error)
+    console.error('[searchMemories] Error details:', error instanceof Error ? error.message : String(error))
+    return []
+  }
+}
+
 
