@@ -9,7 +9,6 @@
  * See docs/workflow-vs-legacy-tools.md for detailed explanation.
  */
 
-import type { Agent } from '@/lib/db-types';
 import { withHITLGuidelines } from '../prompts';
 import {
   fetchAgentStep,
@@ -31,14 +30,20 @@ export async function agentTaskWorkflow(
   console.log(`[Workflow] Starting agent ${agentId} with prompt: ${initialPrompt}`);
 
   // Fetch agent configuration
-  const agent = await fetchAgentStep(agentId);
+  const agentRaw = await fetchAgentStep(agentId);
 
-  if (!agent) {
+  if (!agentRaw) {
     throw new Error(`Agent ${agentId} not found`);
   }
 
+  // Ensure agent is fully serializable
+  const agent = JSON.parse(JSON.stringify(agentRaw));
+
   // Build context from database
-  const { history, researchContext, memoryContext, pending } = await getAgentContextStep(agentId, 20, 5);
+  const contextRaw = await getAgentContextStep(agentId, 20, 5);
+  
+  // Ensure all context data is fully serializable
+  const { history, researchContext, memoryContext, pending } = JSON.parse(JSON.stringify(contextRaw));
 
   // Build system prompt with HITL guidelines
   let systemPrompt = withHITLGuidelines(agent.prompt);
@@ -72,11 +77,11 @@ export async function agentTaskWorkflow(
       });
 
       // Execute one LLM decision inside a step (tools are defined in the step)
-      // Ensure all arguments are serializable
+      // Ensure all arguments are serializable by deep cloning through JSON
       const result = await executeLLMDecisionStep({
         agentId: String(agentId),
         systemPrompt: String(systemPrompt),
-        history: history,
+        history: JSON.parse(JSON.stringify(history)),
         researchContext: researchContext || null,
         memoryContext: memoryContext || null,
         userPrompt: String(initialPrompt),

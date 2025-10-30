@@ -504,6 +504,13 @@ export async function executeLLMDecisionStep(args: {
   let lastFinishReason = 'stop';
   const maxTurns = 5; // Allow up to 5 tool call rounds per workflow step
   
+  // Log initial state for debugging
+  console.log(`[executeLLMDecisionStep] Starting with ${conversationMessages.length} messages`);
+  console.log(`[executeLLMDecisionStep] System prompt length: ${systemPrompt.length} chars`);
+  console.log(`[executeLLMDecisionStep] User prompt: ${userPrompt}`);
+  console.log(`[executeLLMDecisionStep] Available tools: ${args.enabledTools.join(', ')}`);
+  console.log(`[executeLLMDecisionStep] Tools count: ${tools.length}`);
+  
   for (let turn = 0; turn < maxTurns; turn++) {
     // Call OpenAI API
     const completion = await openai.chat.completions.create({
@@ -516,15 +523,29 @@ export async function executeLLMDecisionStep(args: {
     const message = completion.choices[0]?.message;
     lastFinishReason = message?.finish_reason || 'stop';
     
-    // Add assistant message to conversation
+    // Log what the model returned for debugging
+    console.log(`[LLM Turn ${turn + 1}] Finish reason: ${lastFinishReason}`);
+    console.log(`[LLM Turn ${turn + 1}] Tool calls: ${message?.tool_calls?.length || 0}`);
+    if (message?.content) {
+      console.log(`[LLM Turn ${turn + 1}] Content: ${message.content?.substring(0, 150)}...`);
+    }
+    
+    // Add assistant message to conversation (serialize to plain object)
     if (message) {
-      conversationMessages.push(message);
+      conversationMessages.push({
+        role: 'assistant',
+        content: message.content,
+        tool_calls: message.tool_calls,
+      });
     }
     
     // If no tool calls, we're done
     if (!message?.tool_calls || message.tool_calls.length === 0) {
+      console.log(`[LLM Turn ${turn + 1}] No tool calls, ending conversation loop`);
       break;
     }
+    
+    console.log(`[LLM Turn ${turn + 1}] Executing ${message.tool_calls.length} tool call(s)...`);
     
     // Execute tool calls and collect results
     const toolResults: Array<any> = [];
@@ -532,6 +553,7 @@ export async function executeLLMDecisionStep(args: {
     for (const toolCall of message.tool_calls) {
       const functionName = toolCall.function.name;
       const args = JSON.parse(toolCall.function.arguments);
+      console.log(`[Tool Execution] Calling ${functionName} with args:`, args);
       let result: any = { success: false, error: 'Unknown tool' };
 
       // Execute the appropriate tool
