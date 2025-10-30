@@ -120,6 +120,9 @@ Return a JSON object with a "queries" array containing 3-5 search query strings.
 export async function executeResearchStep(agentId: string, query: string, sessionId: string) {
   'use step';
   
+  console.log(`[executeResearchStep] Starting research for query: "${query}"`);
+  console.log(`[executeResearchStep] Agent ID: ${agentId}, Session ID: ${sessionId}`);
+  
   const { searchAndScrape } = await import('@/lib/integrations/firecrawl');
   const { storeMarkdown } = await import('@/lib/integrations/supermemory');
   
@@ -129,23 +132,42 @@ export async function executeResearchStep(agentId: string, query: string, sessio
     scrapeOptions: { formats: ['markdown', 'links'] } 
   });
   
+  console.log(`[executeResearchStep] Search returned ${result.items.length} items`);
+  
   const leads: Array<{ url: string; title?: string; providerId?: string }> = [];
   
   for (const item of result.items) {
-    if (!item.url) continue;
+    if (!item.url) {
+      console.log(`[executeResearchStep] Skipping item: no URL`);
+      continue;
+    }
     
     const md = (item.markdown ?? '').slice(0, 40000);
+    console.log(`[executeResearchStep] Processing ${item.url}, markdown length: ${md.length} chars`);
+    
     if (md.length > 0) {
-      const stored = await storeMarkdown({ 
-        agentId, 
-        url: item.url, 
-        title: item.title, 
-        markdown: md 
-      });
-      console.log(`[executeResearchStep] Stored memory for ${item.url}, memoryId: ${stored.memoryId}`);
-      leads.push({ url: item.url, title: item.title, providerId: stored.providerId });
+      console.log(`[executeResearchStep] Storing memory for ${item.url}...`);
+      try {
+        const stored = await storeMarkdown({ 
+          agentId, 
+          url: item.url, 
+          title: item.title, 
+          markdown: md 
+        });
+        console.log(`[executeResearchStep] ✅ Stored memory for ${item.url}, memoryId: ${stored.memoryId}, providerId: ${stored.providerId}`);
+        leads.push({ url: item.url, title: item.title, providerId: stored.providerId });
+      } catch (error) {
+        console.error(`[executeResearchStep] ❌ Failed to store memory for ${item.url}:`, error);
+        console.error(`[executeResearchStep] Error details:`, error instanceof Error ? error.message : String(error));
+        // Continue processing other items even if one fails
+        leads.push({ url: item.url, title: item.title });
+      }
+    } else {
+      console.log(`[executeResearchStep] Skipping ${item.url}: no markdown content`);
     }
   }
+  
+  console.log(`[executeResearchStep] Completed. Processed ${leads.length} leads from ${result.items.length} items`);
   
   return { 
     itemsScraped: result.items.length, 
@@ -669,7 +691,7 @@ export async function executeLLMDecisionStep(args: {
   // Multi-turn conversation loop (like AI SDK maxSteps behavior)
   const conversationMessages = [...messages];
   let lastFinishReason = 'stop';
-  const maxTurns = 10; // Reduced from 40 to 10 to avoid timeout (each turn can take several seconds)
+  const maxTurns = 5; // Reduced to 5 to avoid timeout (each turn can take 10-20s with tool calls)
   
   // Log initial state for debugging
   console.log(`[executeLLMDecisionStep] Starting with ${conversationMessages.length} messages`);
@@ -690,11 +712,9 @@ export async function executeLLMDecisionStep(args: {
     const message = completion.choices[0]?.message;
     lastFinishReason = message?.finish_reason || 'stop';
     
-    // Log what the model returned for debugging
-    console.log(`[LLM Turn ${turn + 1}] Finish reason: ${lastFinishReason}`);
-    console.log(`[LLM Turn ${turn + 1}] Tool calls: ${message?.tool_calls?.length || 0}`);
-    if (message?.content) {
-      console.log(`[LLM Turn ${turn + 1}] Content: ${message.content?.substring(0, 150)}...`);
+    // Log what the model returned (minimal)
+    if (message?.tool_calls?.length) {
+      console.log(`[LLM Turn ${turn + 1}] ${message.tool_calls.length} tool call(s)`);
     }
     
     // Add assistant message to conversation (serialize to plain object)
@@ -708,11 +728,8 @@ export async function executeLLMDecisionStep(args: {
     
     // If no tool calls, we're done
     if (!message?.tool_calls || message.tool_calls.length === 0) {
-      console.log(`[LLM Turn ${turn + 1}] No tool calls, ending conversation loop`);
       break;
     }
-    
-    console.log(`[LLM Turn ${turn + 1}] Executing ${message.tool_calls.length} tool call(s)...`);
     
     // Execute tool calls and collect results
     const toolResults: Array<any> = [];
@@ -720,7 +737,10 @@ export async function executeLLMDecisionStep(args: {
     for (const toolCall of message.tool_calls) {
       const functionName = toolCall.function.name;
       const args = JSON.parse(toolCall.function.arguments);
-      console.log(`[Tool Execution] Calling ${functionName} with args:`, args);
+      // Only log tool calls for memory-related operations
+      if (functionName === 'firecrawlResearch' || functionName === 'planResearchQueries') {
+        console.log(`[Tool] ${functionName}:`, args.query || args.researchTopic || 'N/A');
+      }
       let result: any = { success: false, error: 'Unknown tool' };
 
       // Execute the appropriate tool
@@ -746,12 +766,19 @@ export async function executeLLMDecisionStep(args: {
           if (!currentSessionId) {
             result = { success: false, error: 'No active session' };
           } else {
+            console.log(`[firecrawlResearch] Executing research step for query: "${args.query}"`);
             researchStarted = true;
-            const res = await executeResearchStep(agentId, args.query, currentSessionId);
-            const links = res.leads.map((l: any) => l.url);
-            const notes = res.leads.map((l: any) => `${l.title}: ${l.url}`);
-            await appendToSessionStep(currentSessionId, args.query, links, notes);
-            result = { success: true, itemsScraped: res.itemsScraped, session_id: currentSessionId };
+            try {
+              const res = await executeResearchStep(agentId, args.query, currentSessionId);
+              console.log(`[firecrawlResearch] ✅ Research completed: ${res.itemsScraped} items, ${res.leads.length} leads stored`);
+              const links = res.leads.map((l: any) => l.url);
+              const notes = res.leads.map((l: any) => `${l.title}: ${l.url}`);
+              await appendToSessionStep(currentSessionId, args.query, links, notes);
+              result = { success: true, itemsScraped: res.itemsScraped, session_id: currentSessionId, leadsCount: res.leads.length };
+            } catch (error) {
+              console.error(`[firecrawlResearch] ❌ Error:`, error);
+              result = { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+            }
           }
           break;
         }
