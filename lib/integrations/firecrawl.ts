@@ -181,19 +181,11 @@ export async function searchAndScrape(params: SearchAndScrapeParams): Promise<Se
     };
   }
 
-  console.log(`[Firecrawl] Searching with simplified query: "${simplifiedQuery}" (original: "${params.query.substring(0, 100)}...")`);
+  console.log(`[Firecrawl] Searching: "${simplifiedQuery}"`);
 
   const json = await doFetch<any>('/search', {
     method: 'POST',
     body: JSON.stringify(body),
-  });
-
-  console.log(`[Firecrawl] Response structure:`, {
-    hasData: !!json?.data,
-    dataIsArray: Array.isArray(json?.data),
-    dataKeys: json?.data && typeof json?.data === 'object' ? Object.keys(json?.data) : 'N/A',
-    rawDataLength: Array.isArray(json?.data) ? json.data.length : 'N/A',
-    webArrayLength: json?.data?.web && Array.isArray(json.data.web) ? json.data.web.length : 'N/A',
   });
 
   // When scrapeOptions are provided, Firecrawl may return:
@@ -216,27 +208,10 @@ export async function searchAndScrape(params: SearchAndScrapeParams): Promise<Se
       data = json.data.images;
     }
   }
-  
-  console.log(`[Firecrawl] Extracted ${data.length} items from response (format: ${Array.isArray(json?.data) ? 'array' : 'object'})`);
 
   const items: SearchAndScrapeItem[] = [];
   for (const it of data) {
-    if (!it || typeof it.url !== 'string') {
-      console.log(`[Firecrawl] Skipping invalid item:`, { hasUrl: !!it?.url, itemKeys: it ? Object.keys(it).slice(0, 5) : 'null' });
-      continue;
-    }
-    
-    // Log first item structure for debugging
-    if (items.length === 0) {
-      console.log(`[Firecrawl] First item structure:`, {
-        url: it.url,
-        hasTitle: !!it.title,
-        hasMarkdown: !!it.markdown,
-        hasDescription: !!(it.description || it.snippet),
-        hasLinks: Array.isArray(it.links),
-        allKeys: Object.keys(it).slice(0, 10),
-      });
-    }
+    if (!it || typeof it.url !== 'string') continue;
     
     items.push({
       url: it.url,
@@ -248,7 +223,7 @@ export async function searchAndScrape(params: SearchAndScrapeParams): Promise<Se
     });
   }
   
-  console.log(`[Firecrawl] Parsed ${items.length} items from ${data.length} raw results`);
+  console.log(`[Firecrawl] Found ${items.length} items`);
   
   return { items };
 }

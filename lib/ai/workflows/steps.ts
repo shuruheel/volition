@@ -23,19 +23,24 @@ export async function planResearchQueriesStep(
   const { searchMemories } = await import('@/lib/integrations/supermemory');
   
   // Search Supermemory for existing research on this topic
-  console.log(`[planResearchQueriesStep] Searching memories for topic: "${researchTopic}"`);
   const existingDocs = await searchMemories(agentId, researchTopic, 10);
   
   let existingResearchSummary = '';
   if (existingDocs.length > 0) {
-    // Summarize existing research to guide query planning
+    // Extract URLs to avoid exact duplicates
+    const existingUrls = existingDocs
+      .map(doc => doc.metadata?.url)
+      .filter(Boolean) as string[];
+    
+    // Use longer content previews (1000 chars) for better context
     const summaries = existingDocs.slice(0, 5).map((doc, idx) => {
       const title = doc.metadata?.title || `Document ${idx + 1}`;
       const url = doc.metadata?.url || '';
-      const preview = doc.content.slice(0, 300).replace(/\s+/g, ' ');
+      const preview = doc.content.slice(0, 1000).replace(/\s+/g, ' ');
       return `- ${title}${url ? ` (${url})` : ''}: ${preview}...`;
     });
-    existingResearchSummary = `\n\nExisting research found in memory:\n${summaries.join('\n')}\n\nAvoid duplicating this research. Focus on gaps, new angles, or deeper dives into specific aspects.`;
+    
+    existingResearchSummary = `\n\nExisting research found in memory (${existingDocs.length} documents):\n${summaries.join('\n')}\n\nCRITICAL: Do NOT research URLs that are already in memory. Existing URLs: ${existingUrls.slice(0, 15).join(', ')}\n\nFocus on gaps, new angles, or deeper dives into specific aspects that aren't covered above.`;
   } else {
     existingResearchSummary = '\n\nNo existing research found in memory. You can explore this topic broadly.';
   }
@@ -103,8 +108,6 @@ Return a JSON object with a "queries" array containing 3-5 search query strings.
       queries = [researchTopic];
     }
 
-    console.log(`[planResearchQueriesStep] Generated ${queries.length} queries:`, queries);
-    
     return {
       queries,
       existingResearch: existingDocs.length > 0 ? existingResearchSummary : undefined,
@@ -122,11 +125,8 @@ Return a JSON object with a "queries" array containing 3-5 search query strings.
 export async function executeResearchStep(agentId: string, query: string, sessionId: string) {
   'use step';
   
-  console.log(`[executeResearchStep] Starting research for query: "${query}"`);
-  console.log(`[executeResearchStep] Agent ID: ${agentId}, Session ID: ${sessionId}`);
-  
   const { searchAndScrape } = await import('@/lib/integrations/firecrawl');
-  const { storeMarkdown } = await import('@/lib/integrations/supermemory');
+  const { storeMarkdown, searchMemories } = await import('@/lib/integrations/supermemory');
   
   const result = await searchAndScrape({ 
     query, 
@@ -134,21 +134,27 @@ export async function executeResearchStep(agentId: string, query: string, sessio
     scrapeOptions: { formats: ['markdown', 'links'] } 
   });
   
-  console.log(`[executeResearchStep] Search returned ${result.items.length} items`);
-  
   const leads: Array<{ url: string; title?: string; providerId?: string }> = [];
   
   for (const item of result.items) {
-    if (!item.url) {
-      console.log(`[executeResearchStep] Skipping item: no URL`);
-      continue;
+    if (!item.url) continue;
+    
+    // Check for duplicate URL in Supermemory before storing
+    try {
+      const existingDocs = await searchMemories(agentId, item.url, 1);
+      const isDuplicate = existingDocs.some(doc => doc.metadata?.url === item.url);
+      
+      if (isDuplicate) {
+        console.log(`[executeResearchStep] ⚠️ Skipping duplicate URL: ${item.url}`);
+        continue;
+      }
+    } catch (error) {
+      // If search fails, continue anyway (better to store than skip)
+      console.warn(`[executeResearchStep] Failed to check for duplicates:`, error instanceof Error ? error.message : String(error));
     }
     
     const md = (item.markdown ?? '').slice(0, 40000);
-    console.log(`[executeResearchStep] Processing ${item.url}, markdown length: ${md.length} chars`);
-    
     if (md.length > 0) {
-      console.log(`[executeResearchStep] Storing memory for ${item.url}...`);
       try {
         const stored = await storeMarkdown({ 
           agentId, 
@@ -156,20 +162,17 @@ export async function executeResearchStep(agentId: string, query: string, sessio
           title: item.title, 
           markdown: md 
         });
-        console.log(`[executeResearchStep] ✅ Stored memory for ${item.url}, memoryId: ${stored.memoryId}, providerId: ${stored.providerId}`);
+        if (stored.memoryId) {
+          console.log(`[executeResearchStep] ✅ Stored: ${item.title || item.url} (memoryId: ${stored.memoryId})`);
+        }
         leads.push({ url: item.url, title: item.title, providerId: stored.providerId });
       } catch (error) {
-        console.error(`[executeResearchStep] ❌ Failed to store memory for ${item.url}:`, error);
-        console.error(`[executeResearchStep] Error details:`, error instanceof Error ? error.message : String(error));
+        console.error(`[executeResearchStep] ❌ Failed to store ${item.url}:`, error instanceof Error ? error.message : String(error));
         // Continue processing other items even if one fails
         leads.push({ url: item.url, title: item.title });
       }
-    } else {
-      console.log(`[executeResearchStep] Skipping ${item.url}: no markdown content`);
     }
   }
-  
-  console.log(`[executeResearchStep] Completed. Processed ${leads.length} leads from ${result.items.length} items`);
   
   return { 
     itemsScraped: result.items.length, 
@@ -695,12 +698,7 @@ export async function executeLLMDecisionStep(args: {
   let lastFinishReason = 'stop';
   const maxTurns = 5; // Reduced to 5 to avoid timeout (each turn can take 10-20s with tool calls)
   
-  // Log initial state for debugging
-  console.log(`[executeLLMDecisionStep] Starting with ${conversationMessages.length} messages`);
-  console.log(`[executeLLMDecisionStep] System prompt length: ${systemPrompt.length} chars`);
-  console.log(`[executeLLMDecisionStep] User prompt: ${userPrompt}`);
-  console.log(`[executeLLMDecisionStep] Available tools: ${args.enabledTools.join(', ')}`);
-  console.log(`[executeLLMDecisionStep] Tools count: ${tools.length}`);
+  // Minimal logging for key steps
   
   for (let turn = 0; turn < maxTurns; turn++) {
     // Call OpenAI API
@@ -768,17 +766,15 @@ export async function executeLLMDecisionStep(args: {
           if (!currentSessionId) {
             result = { success: false, error: 'No active session' };
           } else {
-            console.log(`[firecrawlResearch] Executing research step for query: "${args.query}"`);
             researchStarted = true;
             try {
               const res = await executeResearchStep(agentId, args.query, currentSessionId);
-              console.log(`[firecrawlResearch] ✅ Research completed: ${res.itemsScraped} items, ${res.leads.length} leads stored`);
               const links = res.leads.map((l: any) => l.url);
               const notes = res.leads.map((l: any) => `${l.title}: ${l.url}`);
               await appendToSessionStep(currentSessionId, args.query, links, notes);
               result = { success: true, itemsScraped: res.itemsScraped, session_id: currentSessionId, leadsCount: res.leads.length };
             } catch (error) {
-              console.error(`[firecrawlResearch] ❌ Error:`, error);
+              console.error(`[firecrawlResearch] Error:`, error instanceof Error ? error.message : String(error));
               result = { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
             }
           }
