@@ -90,9 +90,16 @@ export async function agentTaskWorkflow(
         researchStarted: Boolean(researchStarted),
       });
 
+      // Increment step counter FIRST (this step just completed)
+      currentStep++;
+
+      // Sync state updates from step
+      currentSessionId = result.currentSessionId;
+      researchStarted = result.researchStarted;
+
       // Check finish reason
       if (result.finishReason === 'stop') {
-        console.log('[Workflow] Agent decided to stop');
+        console.log(`[Workflow] Agent decided to stop after ${currentStep} step(s)`);
         break;
       }
 
@@ -101,17 +108,10 @@ export async function agentTaskWorkflow(
       }
 
       // Prevent stopping if research session active but not started
-      // Sync state updates from step
-      currentSessionId = result.currentSessionId;
-      researchStarted = result.researchStarted;
-
       if (currentSessionId && !researchStarted) {
         console.log('[Workflow] Research session active but no research done yet, forcing continuation');
-        currentStep++;
         continue;
       }
-
-      currentStep++;
     }
 
     console.log(`[Workflow] Completed after ${currentStep} steps`);

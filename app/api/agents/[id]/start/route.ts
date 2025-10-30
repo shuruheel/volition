@@ -35,7 +35,7 @@ export async function POST(
     }
     
     const agent = agents[0];
-
+    
     // Idempotency window: if an active status update was recorded in the last 10s, do not enqueue again
     const recentStatuses = await sql<any[]>`
       SELECT status, last_update
@@ -80,8 +80,8 @@ export async function POST(
       currentActivity: 'Starting workflow...',
     });
     
-    // Default prompt should be directive and actionable
-    const prompt = task || 'Begin working on your assigned responsibilities. Use the available tools to complete tasks according to your role and instructions.';
+    // Default prompt should explicitly direct the agent to research the topics in its system prompt
+    const prompt = task || 'Begin researching the topics specified in your system prompt. Follow the research workflow: start a research session, conduct multiple research queries on the relevant topics, and complete the session with a comprehensive summary. Focus on the actual research topics (context engineering, fine-tuning, knowledge graphs, advanced reasoning) rather than the tools themselves.';
     
     console.log(`[Agent Start] Invoking workflow for agent ${id}`);
     

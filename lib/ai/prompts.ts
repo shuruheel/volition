@@ -40,10 +40,7 @@ IMPORTANT: Research is a MULTI-STEP ITERATIVE PROCESS. You must follow this comp
   → Each call searches + scrapes + stores content automatically
   → Vary your queries to explore different angles
   → Review results between calls to refine your next query
-  → Examples of good queries:
-    * "Next.js App Router caching strategies 2024"
-    * "React Server Components best practices"
-    * "Vercel AI SDK tool calling patterns"
+  → IMPORTANT: Research the topics specified in your system prompt 
   
 **STEP 3 - Finalize:**
   → Call completeResearchSession with session_id and a synthesized summary
