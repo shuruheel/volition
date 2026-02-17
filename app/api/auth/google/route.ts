@@ -7,13 +7,21 @@ import { getAuthUrl } from '@/lib/integrations/google';
  */
 export async function GET() {
   try {
+    // Check if Google OAuth env vars are configured before attempting redirect
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      return NextResponse.redirect(
+        `${appUrl}/settings?google=error&reason=missing_credentials`
+      );
+    }
+
     const url = getAuthUrl('settings');
     return NextResponse.redirect(url);
   } catch (error) {
     console.error('Google OAuth error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to start OAuth flow' },
-      { status: 500 }
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    return NextResponse.redirect(
+      `${appUrl}/settings?google=error&reason=token_exchange_failed`
     );
   }
 }

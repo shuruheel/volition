@@ -27,11 +27,11 @@ This dashboard tackles all three:
 | Activity feed + metrics | Stable |
 | Encrypted tool config management | Stable |
 | Chat interface | Stable |
-| Gmail (send, search) | New |
-| Google Calendar (list, create events) | New |
-| Telegram bot (send/receive messages) | New |
-| Browser automation (Browser-Use Cloud) | Stable |
-| Voice calls (Twilio) | Stable |
+| Gmail (send, search) | Needs testing |
+| Google Calendar (list, create events) | Needs testing |
+| Telegram bot (send/receive messages) | Needs testing |
+| Browser automation (Browser-Use Cloud) | Needs testing |
+| Voice calls (Twilio) | Needs testing |
 | Knowledge graph visualization | Preview |
 | Authentication | Mock (v2) |
 

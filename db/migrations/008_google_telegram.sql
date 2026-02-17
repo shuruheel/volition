@@ -56,7 +56,7 @@ END $$;
 
 ALTER TABLE public.tool_configs
   ADD CONSTRAINT tool_configs_tool_check
-  CHECK (tool IN ('openai', 'neon', 'supermemory', 'browser_use', 'twilio', 'google_oauth', 'telegram'));
+  CHECK (tool IN ('openai', 'neon', 'firecrawl', 'supermemory', 'browser_use', 'twilio', 'google_oauth', 'telegram'));
 
 -- 3) Telegram users linkage table
 CREATE TABLE IF NOT EXISTS telegram_users (

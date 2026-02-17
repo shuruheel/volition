@@ -3,7 +3,7 @@
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
-import { Globe, Search, Network, Mail, Phone, Calendar, FileText, Terminal, Brain } from "lucide-react"
+import { Globe, Search, Network, Mail, Phone, Calendar, FileText, Terminal, Brain, Send } from "lucide-react"
 
 const ICON_MAP = {
   Globe,
@@ -15,6 +15,7 @@ const ICON_MAP = {
   FileText,
   Terminal,
   Brain,
+  Send,
 }
 
 // Available tools for agents
@@ -22,7 +23,7 @@ const AVAILABLE_TOOLS = [
   {
     id: 'openai',
     label: 'OpenAI',
-    description: 'GPT-4o model for text generation and completion',
+    description: 'GPT-5.2 model for text generation and reasoning',
     icon: 'Terminal',
     category: 'AI Models',
     sensitive: false,
@@ -60,22 +61,20 @@ const AVAILABLE_TOOLS = [
     sensitive: true,
   },
   {
-    id: 'gmail',
-    label: 'Gmail (Coming Soon)',
-    description: 'Send and read emails via Composio',
+    id: 'google',
+    label: 'Google (Gmail + Calendar)',
+    description: 'Send/search emails and manage calendar events. Requires HITL approval for sends and event creation.',
     icon: 'Mail',
     category: 'Communication',
     sensitive: true,
-    disabled: true,
   },
   {
-    id: 'calendar',
-    label: 'Google Calendar (Coming Soon)',
-    description: 'Create and manage calendar events',
-    icon: 'Calendar',
-    category: 'Productivity',
+    id: 'telegram',
+    label: 'Telegram',
+    description: 'Send and receive messages via Telegram bot',
+    icon: 'Send',
+    category: 'Communication',
     sensitive: false,
-    disabled: true,
   },
 ]
 

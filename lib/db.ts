@@ -135,7 +135,7 @@ export interface Call {
 export interface ToolConfig {
   id: string;
   user_id: string;
-  tool: 'openai' | 'neon' | 'supermemory' | 'browser_use' | 'twilio' | 'google_oauth' | 'telegram';
+  tool: 'openai' | 'neon' | 'firecrawl' | 'supermemory' | 'browser_use' | 'twilio' | 'google_oauth' | 'telegram';
   data_encrypted: string;
   created_at: Date;
   updated_at: Date;

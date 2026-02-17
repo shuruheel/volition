@@ -1,12 +1,13 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Brain, Globe, Phone, Mail, Database, Key, CheckCircle2, XCircle, Loader2, Calendar, Send } from "lucide-react"
+import { Brain, Globe, Phone, Mail, Database, Key, CheckCircle2, XCircle, Loader2, Calendar, Send, Search, AlertCircle } from "lucide-react"
 
 interface ToolConfig {
   id: string
@@ -37,6 +38,17 @@ const TOOL_DEFINITIONS = [
     bgColor: 'bg-purple-100 dark:bg-purple-900/20',
     fields: [
       { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'sm_...' },
+    ],
+  },
+  {
+    id: 'firecrawl',
+    name: 'Firecrawl',
+    description: 'Web search and scraping for agent research',
+    icon: Search,
+    color: 'text-amber-600',
+    bgColor: 'bg-amber-100 dark:bg-amber-900/20',
+    fields: [
+      { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'fc-...' },
     ],
   },
   {
@@ -100,15 +112,35 @@ const TOOL_DEFINITIONS = [
 ]
 
 export default function SettingsPage() {
+  const searchParams = useSearchParams()
   const [configs, setConfigs] = useState<ToolConfig[]>([])
   const [loading, setLoading] = useState<{ [key: string]: boolean }>({})
   const [testing, setTesting] = useState<{ [key: string]: boolean }>({})
   const [testResults, setTestResults] = useState<{ [key: string]: { success: boolean; message?: string } }>({})
   const [formData, setFormData] = useState<{ [key: string]: any }>({})
+  const [oauthBanner, setOauthBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
     fetchConfigs()
-  }, [])
+
+    // Handle Google OAuth callback query params
+    const googleStatus = searchParams.get('google')
+    if (googleStatus === 'connected') {
+      setOauthBanner({ type: 'success', message: 'Google account connected successfully!' })
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings')
+    } else if (googleStatus === 'error') {
+      const reason = searchParams.get('reason') || 'unknown'
+      const messages: Record<string, string> = {
+        access_denied: 'Google account connection was cancelled.',
+        no_code: 'No authorization code received from Google.',
+        token_exchange_failed: 'Failed to exchange authorization code for tokens.',
+        missing_credentials: 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not configured.',
+      }
+      setOauthBanner({ type: 'error', message: messages[reason] || `Google connection failed: ${reason}` })
+      window.history.replaceState({}, '', '/settings')
+    }
+  }, [searchParams])
 
   const fetchConfigs = async () => {
     try {
@@ -206,6 +238,29 @@ export default function SettingsPage() {
           </p>
         </div>
 
+        {oauthBanner && (
+          <div
+            className={`mb-4 p-4 rounded-lg flex items-start gap-3 ${
+              oauthBanner.type === 'success'
+                ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+            }`}
+          >
+            {oauthBanner.type === 'success' ? (
+              <CheckCircle2 className="h-5 w-5 mt-0.5 shrink-0" />
+            ) : (
+              <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" />
+            )}
+            <p className="text-sm">{oauthBanner.message}</p>
+            <button
+              onClick={() => setOauthBanner(null)}
+              className="ml-auto text-sm underline opacity-70 hover:opacity-100"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         <div className="space-y-4">
           {TOOL_DEFINITIONS.map((tool) => {
             const ToolIcon = tool.icon
@@ -241,24 +296,61 @@ export default function SettingsPage() {
                 <CardContent>
                   <div className="space-y-4">
                     {'oauth' in tool && tool.oauth ? (
-                      <div className="flex flex-wrap gap-2 pt-2">
-                        <Button
-                          size="sm"
-                          onClick={() => window.location.href = '/api/auth/google'}
-                          disabled={configured}
-                        >
-                          {configured ? (
-                            <>
-                              <CheckCircle2 className="h-4 w-4 mr-2" />
-                              Connected
-                            </>
-                          ) : (
-                            <>
-                              <Key className="h-4 w-4 mr-2" />
-                              Connect Google Account
-                            </>
+                      <div className="space-y-4">
+                        <div className="flex flex-wrap gap-2 pt-2">
+                          <Button
+                            size="sm"
+                            onClick={() => window.location.href = '/api/auth/google'}
+                            disabled={configured}
+                          >
+                            {configured ? (
+                              <>
+                                <CheckCircle2 className="h-4 w-4 mr-2" />
+                                Connected
+                              </>
+                            ) : (
+                              <>
+                                <Key className="h-4 w-4 mr-2" />
+                                Connect Google Account
+                              </>
+                            )}
+                          </Button>
+
+                          {configured && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleTest(tool.id)}
+                              disabled={testing[tool.id]}
+                            >
+                              {testing[tool.id] ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Testing...
+                                </>
+                              ) : (
+                                'Test Connection'
+                              )}
+                            </Button>
                           )}
-                        </Button>
+                        </div>
+
+                        {testResult && (
+                          <div
+                            className={`p-3 rounded-lg flex items-start gap-2 ${
+                              testResult.success
+                                ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                                : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                            }`}
+                          >
+                            {testResult.success ? (
+                              <CheckCircle2 className="h-5 w-5 mt-0.5 shrink-0" />
+                            ) : (
+                              <XCircle className="h-5 w-5 mt-0.5 shrink-0" />
+                            )}
+                            <p className="text-sm">{testResult.message}</p>
+                          </div>
+                        )}
                       </div>
                     ) : (
                     <>

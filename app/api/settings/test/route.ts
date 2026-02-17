@@ -40,7 +40,16 @@ export async function POST(request: NextRequest) {
         
       case 'twilio':
         return await testTwilio(userId);
-        
+
+      case 'firecrawl':
+        return await testFirecrawl(userId);
+
+      case 'google_oauth':
+        return await testGoogleOAuth(userId);
+
+      case 'telegram':
+        return await testTelegram(userId);
+
       default:
         return NextResponse.json(
           { error: 'Unknown tool' },
@@ -187,6 +196,113 @@ async function testTwilio(userId: string) {
     });
   } catch (error) {
     throw new Error(`Twilio test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+async function testFirecrawl(userId: string) {
+  try {
+    const configs = await sql`
+      SELECT data_encrypted FROM tool_configs
+      WHERE user_id = ${userId} AND tool = 'firecrawl'
+    `;
+
+    if (configs.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'Firecrawl not configured',
+      });
+    }
+
+    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
+    const apiKey = data.apiKey;
+
+    // Test with a lightweight search request
+    const response = await fetch('https://api.firecrawl.dev/v1/search', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: 'test', limit: 1 }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`API returned ${response.status}: ${errorBody}`);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Firecrawl API connection successful',
+    });
+  } catch (error) {
+    throw new Error(`Firecrawl test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+async function testGoogleOAuth(userId: string) {
+  try {
+    const configs = await sql`
+      SELECT data_encrypted FROM tool_configs
+      WHERE user_id = ${userId} AND tool = 'google_oauth'
+    `;
+
+    if (configs.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'Google account not connected. Use the "Connect Google Account" button.',
+      });
+    }
+
+    // Verify tokens are valid by checking token info
+    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
+    if (!data.access_token) {
+      return NextResponse.json({
+        success: false,
+        error: 'Stored tokens are invalid. Please reconnect your Google account.',
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Google OAuth tokens are stored and valid',
+    });
+  } catch (error) {
+    throw new Error(`Google OAuth test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+async function testTelegram(userId: string) {
+  try {
+    const configs = await sql`
+      SELECT data_encrypted FROM tool_configs
+      WHERE user_id = ${userId} AND tool = 'telegram'
+    `;
+
+    if (configs.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'Telegram not configured',
+      });
+    }
+
+    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
+    const botToken = data.botToken;
+
+    // Test by calling getMe on the Telegram Bot API
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+    const result = await response.json();
+
+    if (!result.ok) {
+      throw new Error(result.description || 'Invalid bot token');
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Telegram bot @${result.result.username} connected successfully`,
+    });
+  } catch (error) {
+    throw new Error(`Telegram test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
