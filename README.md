@@ -33,7 +33,7 @@ This dashboard tackles all three:
 | Browser automation (Browser-Use Cloud) | Needs testing |
 | Voice calls (Twilio) | Needs testing |
 | Knowledge graph visualization | Preview |
-| Authentication | Mock (v2) |
+| Authentication | Single-user (no login) |
 
 ## Architecture
 
