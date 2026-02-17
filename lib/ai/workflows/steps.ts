@@ -510,11 +510,26 @@ export async function clearAgentStatusStep(agentId: string) {
 }
 
 /**
+ * Check if agent is still enabled. Returns true if enabled, false if disabled.
+ * Used at the start of each workflow loop iteration for graceful shutdown.
+ */
+export async function checkAgentEnabledStep(agentId: string): Promise<boolean> {
+  'use step';
+
+  const rows = await sql<any[]>`SELECT enabled FROM agents WHERE id = ${agentId}`;
+  if (rows.length === 0) return false;
+  return rows[0].enabled === true;
+}
+
+/**
  * Execute one LLM decision cycle using raw OpenAI API (bypassing AI SDK tool wrappers).
  * Returns serializable state deltas and finish reason.
  */
 export async function executeLLMDecisionStep(args: {
   agentId: string;
+  userId?: string | null;
+  modelProvider?: string | null;
+  modelId?: string | null;
   systemPrompt: string;
   history: Array<any>;
   researchContext?: string | null;
@@ -526,16 +541,14 @@ export async function executeLLMDecisionStep(args: {
 }) {
   'use step';
 
-  const { agentId, systemPrompt, history, researchContext, memoryContext, userPrompt } = args;
+  const { agentId, userId, systemPrompt, history, researchContext, memoryContext, userPrompt } = args;
   let { currentSessionId, researchStarted } = args;
   let researchSessionCompleted = false;
 
-  // Use raw OpenAI SDK to avoid AI SDK serialization issues
-  const { default: OpenAI } = await import('openai');
-  
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY!,
-  });
+  // Resolve provider config (supports OpenAI, Anthropic, etc.)
+  const { resolveProviderConfig, createProvider } = await import('@/lib/ai/providers');
+  const providerConfig = await resolveProviderConfig(args.modelProvider, args.modelId, userId);
+  const provider = createProvider(providerConfig);
 
   // Define tools in raw OpenAI format (JSON Schema)
   const tools: Array<any> = [
@@ -658,6 +671,77 @@ export async function executeLLMDecisionStep(args: {
       },
     },
   ];
+
+  // Sub-agent spawning tool
+  tools.push({
+    type: 'function',
+    function: {
+      name: 'spawnSubAgent',
+      description: 'Spawn a sub-agent to handle a specific subtask. The sub-agent runs as a separate workflow and returns results when complete. Use this for parallelizable research tasks or when a subtask needs focused attention.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'The specific task for the sub-agent to complete' },
+          tools: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Tools the sub-agent needs (e.g., ["firecrawl", "supermemory"]). Defaults to parent agent tools.',
+          },
+          maxSteps: { type: 'number', description: 'Max steps for the sub-agent (default 10)' },
+        },
+        required: ['task'],
+        additionalProperties: false,
+      },
+    },
+  });
+
+  // Memory tools (always available if user has Google Drive access)
+  if (userId) {
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'readMemory',
+          description: 'Read a memory file from your persistent storage. Available files: soul.md (personality/style), preferences.md (learned user preferences), knowledge.md (accumulated research), journal.md (activity summaries).',
+          parameters: {
+            type: 'object',
+            properties: {
+              filename: {
+                type: 'string',
+                enum: ['soul.md', 'preferences.md', 'knowledge.md', 'journal.md'],
+                description: 'Which memory file to read',
+              },
+            },
+            required: ['filename'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'updateMemory',
+          description: 'Write or update a memory file in your persistent storage. Use this to save learned preferences, accumulated knowledge, personality notes, or daily journal entries.',
+          parameters: {
+            type: 'object',
+            properties: {
+              filename: {
+                type: 'string',
+                enum: ['soul.md', 'preferences.md', 'knowledge.md', 'journal.md'],
+                description: 'Which memory file to update',
+              },
+              content: {
+                type: 'string',
+                description: 'Full markdown content for the file (replaces existing content)',
+              },
+            },
+            required: ['filename', 'content'],
+            additionalProperties: false,
+          },
+        },
+      }
+    );
+  }
 
   // Conditionally add Google tools (email + calendar)
   if (args.enabledTools.includes('google')) {
@@ -799,22 +883,22 @@ export async function executeLLMDecisionStep(args: {
   // Minimal logging for key steps
   
   for (let turn = 0; turn < maxTurns; turn++) {
-    // Call OpenAI API
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-5.2-2025-12-11',
+    // Call LLM via provider abstraction
+    const completion = await provider.createCompletion({
+      model: providerConfig.model,
       messages: conversationMessages,
       tools,
       tool_choice: 'auto',
     });
 
-    const message = completion.choices[0]?.message;
-    lastFinishReason = message?.finish_reason || 'stop';
-    
+    const message = completion.message;
+    lastFinishReason = completion.finishReason || 'stop';
+
     // Log what the model returned (minimal)
     if (message?.tool_calls?.length) {
       console.log(`[LLM Turn ${turn + 1}] ${message.tool_calls.length} tool call(s)`);
     }
-    
+
     // Add assistant message to conversation (serialize to plain object)
     if (message) {
       conversationMessages.push({
@@ -823,15 +907,15 @@ export async function executeLLMDecisionStep(args: {
         tool_calls: message.tool_calls,
       });
     }
-    
+
     // If no tool calls, we're done
     if (!message?.tool_calls || message.tool_calls.length === 0) {
       break;
     }
-    
+
     // Execute tool calls and collect results
     const toolResults: Array<any> = [];
-    
+
     for (const toolCall of message.tool_calls) {
       const functionName = toolCall.function.name;
       const args = JSON.parse(toolCall.function.arguments);
@@ -993,8 +1077,9 @@ export async function executeLLMDecisionStep(args: {
             for await (const event of emailEvents) {
               if (event.approved) {
                 const { sendEmail: gmailSend } = await import('@/lib/integrations/google');
-                const userId = 'mock-user-id';
-                const emailResult = await gmailSend(userId, {
+                if (!userId) throw new Error('User authentication required for this operation');
+                const toolUserId = userId;
+                const emailResult = await gmailSend(toolUserId, {
                   to: args.to,
                   subject: args.subject,
                   body: args.body,
@@ -1017,8 +1102,9 @@ export async function executeLLMDecisionStep(args: {
         case 'searchEmails': {
           try {
             const { listEmails } = await import('@/lib/integrations/google');
-            const userId = 'mock-user-id';
-            const emails = await listEmails(userId, {
+            if (!userId) throw new Error('User authentication required for this operation');
+            const toolUserId = userId;
+            const emails = await listEmails(toolUserId, {
               query: args.query,
               maxResults: args.maxResults || 10,
             });
@@ -1051,8 +1137,9 @@ export async function executeLLMDecisionStep(args: {
             for await (const event of calEvents) {
               if (event.approved) {
                 const { createCalendarEvent: gcalCreate } = await import('@/lib/integrations/google');
-                const userId = 'mock-user-id';
-                const calResult = await gcalCreate(userId, {
+                if (!userId) throw new Error('User authentication required for this operation');
+                const toolUserId = userId;
+                const calResult = await gcalCreate(toolUserId, {
                   summary: args.summary,
                   start: args.start,
                   end: args.end,
@@ -1076,8 +1163,9 @@ export async function executeLLMDecisionStep(args: {
         case 'listCalendarEvents': {
           try {
             const { listCalendarEvents: gcalList } = await import('@/lib/integrations/google');
-            const userId = 'mock-user-id';
-            const events = await gcalList(userId, {
+            if (!userId) throw new Error('User authentication required for this operation');
+            const toolUserId = userId;
+            const events = await gcalList(toolUserId, {
               timeMin: args.timeMin,
               timeMax: args.timeMax,
               maxResults: args.maxResults || 20,
@@ -1122,8 +1210,88 @@ export async function executeLLMDecisionStep(args: {
           }
           break;
         }
+        case 'spawnSubAgent': {
+          try {
+            const subTools = args.tools || args.enabledTools || [];
+            const subMaxSteps = args.maxSteps || 10;
+
+            // Create a temporary sub-agent record
+            const subAgentRows = await sql`
+              INSERT INTO agents (name, prompt, tools, status, user_id, parent_agent_id)
+              VALUES (
+                ${'Sub-agent: ' + args.task.slice(0, 50)},
+                ${args.task},
+                ${subTools},
+                'active',
+                ${userId || null},
+                ${agentId}
+              )
+              RETURNING id
+            `;
+            const subAgentId = subAgentRows[0].id;
+
+            // Log sub-agent spawn activity
+            const spawnActivityRows = await sql`
+              INSERT INTO activities (agent_id, type, status, payload)
+              VALUES (${agentId}, 'task_completed', 'completed', ${JSON.stringify({
+                title: 'Spawned sub-agent',
+                subAgentId,
+                task: args.task,
+              })})
+              RETURNING id
+            `;
+
+            // Run the sub-agent workflow inline (within this step)
+            const { agentTaskWorkflow } = await import('@/lib/ai/workflows/agent-workflow');
+            // We call the workflow function directly since we're already in a step
+            const subResult = await agentTaskWorkflow(subAgentId, args.task, subMaxSteps);
+
+            // Mark sub-agent as idle
+            await sql`UPDATE agents SET status = 'idle' WHERE id = ${subAgentId}`;
+
+            result = {
+              success: true,
+              subAgentId,
+              steps: subResult.steps,
+              message: `Sub-agent completed ${subResult.steps} steps`,
+            };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Sub-agent failed' };
+          }
+          break;
+        }
+        case 'readMemory': {
+          if (!userId) {
+            result = { success: false, error: 'No user context for memory access' };
+            break;
+          }
+          try {
+            const { readMemoryFile } = await import('@/lib/integrations/google-drive');
+            const content = await readMemoryFile(userId, agentId, args.filename);
+            result = { success: true, filename: args.filename, content: content || '' };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to read memory file' };
+          }
+          break;
+        }
+        case 'updateMemory': {
+          if (!userId) {
+            result = { success: false, error: 'No user context for memory access' };
+            break;
+          }
+          try {
+            const { writeMemoryFile } = await import('@/lib/integrations/google-drive');
+            const agentRows = await sql`SELECT name FROM agents WHERE id = ${agentId}`;
+            const agentName = agentRows[0]?.name || 'Agent';
+            const fileId = await writeMemoryFile(userId, agentId, agentName, args.filename, args.content);
+            result = { success: true, filename: args.filename, fileId };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to update memory file' };
+          }
+          break;
+        }
       }
-      
+
       // Add tool result to conversation
       toolResults.push({
         tool_call_id: toolCall.id,

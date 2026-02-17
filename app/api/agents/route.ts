@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
+import { requireUserId } from '@/lib/auth';
 
 /**
  * GET /api/agents
@@ -8,8 +9,10 @@ import type { Agent } from '@/lib/db';
  */
 export async function GET() {
   try {
+    const userId = await requireUserId();
     const agents = await sql<Agent[]>`
       SELECT * FROM agents
+      WHERE user_id = ${userId} OR user_id IS NULL
       ORDER BY created_at DESC
     `;
     
@@ -28,18 +31,19 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, prompt, tools = [] } = body;
-    
+    const { name, prompt, tools = [], model_provider, model_id } = body;
+
     if (!name || !prompt) {
       return NextResponse.json(
         { error: 'Name and prompt are required' },
         { status: 400 }
       );
     }
-    
+
+    const userId = await requireUserId();
     const result = await sql<Agent[]>`
-      INSERT INTO agents (name, prompt, tools, status)
-      VALUES (${name}, ${prompt}, ${tools}, 'idle')
+      INSERT INTO agents (name, prompt, tools, status, user_id, model_provider, model_id)
+      VALUES (${name}, ${prompt}, ${tools}, 'idle', ${userId}, ${model_provider || 'openai'}, ${model_id || null})
       RETURNING *
     `;
     

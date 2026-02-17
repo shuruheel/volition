@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { encrypt, decrypt } from '@/lib/crypto';
+import { requireUserId } from '@/lib/auth';
 
 /**
  * GET /api/settings/tools
@@ -8,8 +9,7 @@ import { encrypt, decrypt } from '@/lib/crypto';
  */
 export async function GET(request: NextRequest) {
   try {
-    // TODO: Get userId from auth session
-    const userId = 'mock-user-id';
+    const userId = await requireUserId();
     
     const configs = await sql`
       SELECT id, tool, created_at, updated_at
@@ -61,8 +61,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // TODO: Get userId from auth session
-    const userId = 'mock-user-id';
+    const userId = await requireUserId();
     
     // Encrypt sensitive data
     const encryptedData = await encrypt(JSON.stringify(data));
@@ -109,8 +108,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
     
-    // TODO: Get userId from auth session
-    const userId = 'mock-user-id';
+    const userId = await requireUserId();
     
     await sql`
       DELETE FROM tool_configs

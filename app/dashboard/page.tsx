@@ -8,7 +8,10 @@ import { ChatDrawer } from "@/components/chat-drawer"
 import { AgentStatusCard } from "@/components/agent-status-card"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone } from "lucide-react"
+import { HeartbeatIndicator } from "@/components/heartbeat-indicator"
+import { AgentAnalytics } from "@/components/agent-analytics"
+import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone, LayoutTemplate, Sparkles } from "lucide-react"
+import Link from "next/link"
 import type { Activity } from "@/lib/db"
 
 // Activity types to display in feed (excluding high-frequency noise)
@@ -117,18 +120,32 @@ export default function DashboardPage() {
     return () => es.close()
   }, [selectedAgentId])
 
-  const handleCreateAgent = async (name: string, prompt: string, tools: string[]) => {
+  const handleCreateAgent = async (name: string, prompt: string, tools: string[], schedule?: { enabled: boolean; interval_minutes: number; checklist: string }, modelProvider?: string, modelId?: string) => {
     try {
       const response = await fetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, prompt, tools }),
+        body: JSON.stringify({ name, prompt, tools, model_provider: modelProvider, model_id: modelId }),
       })
-      
+
       if (!response.ok) throw new Error('Failed to create agent')
-      
+
       const newAgent = await response.json()
       setAgents([...agents, newAgent])
+
+      // Create schedule if configured
+      if (schedule?.enabled) {
+        await fetch(`/api/agents/${newAgent.id}/schedule`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schedule_type: 'interval',
+            interval_minutes: schedule.interval_minutes,
+            checklist: schedule.checklist,
+            enabled: true,
+          }),
+        })
+      }
     } catch (error) {
       console.error('Failed to create agent:', error)
     }
@@ -137,27 +154,26 @@ export default function DashboardPage() {
   const handleToggleStatus = async (agentId: string) => {
     const agent = agents.find((a) => a.id === agentId)
     if (!agent) return
-    
-    const isStarting = agent.status !== 'active'
-    const endpoint = isStarting ? 'start' : 'stop'
-    
+
+    // Enable/disable based on current enabled state
+    const isEnabling = !agent.enabled
+    const endpoint = isEnabling ? 'start' : 'stop'
+
     try {
       const response = await fetch(`/api/agents/${agentId}/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          task: isStarting ? 'Start working on your assigned tasks' : undefined 
-        }),
+        body: JSON.stringify({}),
       })
-      
+
       if (!response.ok) {
         const error = await response.json()
         throw new Error(error.error || 'Failed to update agent')
       }
-      
+
       const { agent: updatedAgent } = await response.json()
       setAgents(agents.map((a) => (a.id === agentId ? updatedAgent : a)))
-      
+
       // Refresh metrics after status change
       const params = new URLSearchParams()
       if (selectedAgentId) {
@@ -250,11 +266,18 @@ export default function DashboardPage() {
     }
   }, [activities, lastPendingQuestionId])
 
-  const statusColors = {
-    active: "bg-green-500",
-    idle: "bg-gray-500",
-    paused: "bg-yellow-500",
-    error: "bg-red-500",
+  const getStatusDisplay = (agent: Agent) => {
+    if (agent.status === 'error') {
+      return { color: 'bg-red-500', label: 'Error', pulse: false }
+    }
+    if (!agent.enabled) {
+      return { color: 'bg-gray-500', label: 'Disabled', pulse: false }
+    }
+    if (agent.status === 'active') {
+      return { color: 'bg-green-500', label: 'Running...', pulse: true }
+    }
+    // enabled + idle = listening
+    return { color: 'bg-blue-500', label: 'Listening...', pulse: false }
   }
 
   return (
@@ -273,6 +296,18 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <Link href="/templates">
+                <Button variant="outline" size="sm" className="gap-1">
+                  <LayoutTemplate className="h-4 w-4" />
+                  Templates
+                </Button>
+              </Link>
+              <Link href="/skills">
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Sparkles className="h-4 w-4" />
+                  Skills
+                </Button>
+              </Link>
               <CreateAgentDialog onCreateAgent={handleCreateAgent} />
             </div>
           </div>
@@ -307,18 +342,25 @@ export default function DashboardPage() {
                       <h3 className="font-semibold text-base mb-1">{agent.name}</h3>
                       <p className="text-xs text-muted-foreground line-clamp-2">{agent.prompt}</p>
                     </div>
-                    <div className={`h-2 w-2 rounded-full ${statusColors[agent.status]} shrink-0 mt-1`} />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <HeartbeatIndicator agentId={agent.id} />
+                      <div className="flex items-center gap-1.5">
+                        <div className={`h-2 w-2 rounded-full ${getStatusDisplay(agent).color} ${getStatusDisplay(agent).pulse ? 'animate-pulse' : ''}`} />
+                        <span className="text-xs text-muted-foreground">{getStatusDisplay(agent).label}</span>
+                      </div>
+                    </div>
                   </div>
                   <div className="flex gap-2">
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant={agent.enabled ? "default" : "outline"}
                       onClick={(e) => {
                         e.stopPropagation()
                         handleToggleStatus(agent.id)
                       }}
                     >
-                      {agent.status === "active" ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                      {agent.enabled ? <Pause className="h-3 w-3 mr-1" /> : <Play className="h-3 w-3 mr-1" />}
+                      <span className="text-xs">{agent.enabled ? 'Disable' : 'Enable'}</span>
                     </Button>
                     <Button
                       size="sm"
@@ -412,10 +454,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Agent Status (if agent is selected) */}
+        {/* Agent Status + Analytics (if agent is selected) */}
         {selectedAgentId && (
-          <div className="mb-6">
+          <div className="mb-6 space-y-4">
             <AgentStatusCard agentId={selectedAgentId} />
+            <AgentAnalytics agentId={selectedAgentId} />
           </div>
         )}
 

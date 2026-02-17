@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { exchangeCodeForTokens } from '@/lib/integrations/google';
+import { requireUserId } from '@/lib/auth';
 
 /**
  * GET /api/auth/google/callback
@@ -24,8 +25,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // TODO: Get userId from auth session
-    const userId = 'mock-user-id';
+    const userId = await requireUserId();
 
     await exchangeCodeForTokens(code, userId);
 

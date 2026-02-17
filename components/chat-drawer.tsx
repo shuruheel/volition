@@ -156,16 +156,11 @@ export function ChatDrawer({ agents, triggerAgentId }: ChatDrawerProps) {
       // fall through to message creation
     }
 
-    // Otherwise, store as a user message for history
-    await fetch('/api/activities', {
+    // Otherwise, send as a chat message (stores + triggers workflow if agent is enabled)
+    await fetch(`/api/agents/${selectedAgentId}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent_id: selectedAgentId,
-        type: 'user_message',
-        status: 'completed',
-        payload: { content },
-      }),
+      body: JSON.stringify({ content }),
     })
   }
 

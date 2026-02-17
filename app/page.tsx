@@ -1,21 +1,24 @@
-"use client"
+import { redirect } from "next/navigation"
+import { auth } from "@/lib/auth"
+import { sql } from "@/lib/db"
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+export default async function HomePage() {
+  const session = await auth()
+  if (!session?.user) {
+    redirect("/login")
+  }
 
-export default function HomePage() {
-  const router = useRouter()
+  // Check if user has OpenAI key configured
+  const userId = session.user.id
+  if (userId) {
+    const configs = await sql`
+      SELECT id FROM tool_configs
+      WHERE user_id = ${userId} AND tool = 'openai'
+    `
+    if (configs.length === 0) {
+      redirect("/onboarding")
+    }
+  }
 
-  useEffect(() => {
-    router.push("/dashboard")
-  }, [router])
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-center">
-        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto" />
-        <p className="mt-4 text-muted-foreground">Loading...</p>
-      </div>
-    </div>
-  )
+  redirect("/dashboard")
 }

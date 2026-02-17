@@ -1,15 +1,15 @@
 /**
  * Main agent workflow using Vercel Workflow for durable, resumable execution
  * Replaces executeAgentTask() with workflow directives
- * 
+ *
  * IMPORTANT: This workflow defines tools INLINE with 'parameters' key.
  * DO NOT import tools from lib/ai/tools/ - those use AI SDK tool() helper
  * which is incompatible with Vercel Workflow tool format.
- * 
+ *
  * See docs/workflow-vs-legacy-tools.md for detailed explanation.
  */
 
-import { withHITLGuidelines } from '../prompts';
+import { withHITLGuidelines, withSkills, type TriggerType } from '../prompts';
 import {
   fetchAgentStep,
   updateAgentDBStatusStep,
@@ -19,16 +19,18 @@ import {
   logActivityStep,
   executeLLMDecisionStep,
   autoCompleteResearchSessionStep,
+  checkAgentEnabledStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
   agentId: string,
   initialPrompt: string,
-  maxSteps: number = 20
+  maxSteps: number = 20,
+  triggerType: TriggerType = 'manual'
 ) {
   'use workflow';
 
-  console.log(`[Workflow] Starting agent ${agentId} with prompt: ${initialPrompt}`);
+  console.log(`[Workflow] Starting agent ${agentId} (trigger: ${triggerType}) with prompt: ${initialPrompt}`);
 
   // Fetch agent configuration
   const agentRaw = await fetchAgentStep(agentId);
@@ -42,12 +44,22 @@ export async function agentTaskWorkflow(
 
   // Build context from database
   const contextRaw = await getAgentContextStep(agentId, 20, 5);
-  
+
   // Ensure all context data is fully serializable
   const { history, researchContext, memoryContext, pending } = JSON.parse(JSON.stringify(contextRaw));
 
-  // Build system prompt with HITL guidelines
-  let systemPrompt = withHITLGuidelines(agent.prompt);
+  // Build system prompt based on trigger type
+  let systemPrompt = withHITLGuidelines(agent.prompt, triggerType);
+
+  // Inject enabled skill instructions into system prompt
+  if (Array.isArray(agent.skills) && agent.skills.length > 0) {
+    const { getSkillsByIds } = await import('@/lib/skills/registry');
+    const enabledSkills = getSkillsByIds(agent.skills);
+    if (enabledSkills.length > 0) {
+      systemPrompt = withSkills(systemPrompt, enabledSkills.map(s => s.instructions));
+    }
+  }
+
   if (pending) {
     systemPrompt += `\n\nNote: There is a pending user question awaiting approval. Do not re-ask. Wait by polling approval instead.`;
   }
@@ -68,6 +80,13 @@ export async function agentTaskWorkflow(
   try {
     // Main workflow loop
     while (currentStep < maxSteps) {
+      // Check if agent was disabled mid-workflow
+      const stillEnabled = await checkAgentEnabledStep(agentId);
+      if (!stillEnabled) {
+        console.log(`[Workflow] Agent ${agentId} was disabled, stopping gracefully`);
+        break;
+      }
+
       console.log(`[Workflow] Step ${currentStep + 1}/${maxSteps}`);
 
       await updateAgentStatusStep(agentId, {
@@ -81,6 +100,9 @@ export async function agentTaskWorkflow(
       // Ensure all arguments are serializable by deep cloning through JSON
       const result = await executeLLMDecisionStep({
         agentId: String(agentId),
+        userId: agent.user_id || null,
+        modelProvider: agent.model_provider || null,
+        modelId: agent.model_id || null,
         systemPrompt: String(systemPrompt),
         history: JSON.parse(JSON.stringify(history)),
         researchContext: researchContext || null,
@@ -102,8 +124,6 @@ export async function agentTaskWorkflow(
       // If a research session was just completed, update userPrompt to encourage analysis and planning
       if (researchSessionCompleted) {
         console.log('[Workflow] Research session completed, encouraging post-session analysis and planning');
-        // Update initialPrompt to guide agent to analyze findings and plan next steps
-        // This will be passed to the next step execution
         initialPrompt = `You've just completed a research session. Now you MUST:
 1. Analyze what you've learned in this session
 2. Review your system prompt to identify remaining knowledge gaps
@@ -147,7 +167,7 @@ Remember: You are a CONTINUOUS RESEARCH AGENT. Your goal is to populate your mem
       }
     }
 
-    // Mark agent as idle
+    // Mark agent as idle (does NOT touch enabled — agent stays enabled)
     await clearAgentStatusStep(agentId);
     await updateAgentDBStatusStep(agentId, 'idle');
 
@@ -155,6 +175,7 @@ Remember: You are a CONTINUOUS RESEARCH AGENT. Your goal is to populate your mem
     await logActivityStep(agentId, 'task_completed', {
       prompt: initialPrompt,
       steps: currentStep,
+      triggerType,
       completedAt: new Date().toISOString(),
     });
 
@@ -162,6 +183,7 @@ Remember: You are a CONTINUOUS RESEARCH AGENT. Your goal is to populate your mem
       completed: true,
       steps: currentStep,
       agentId,
+      triggerType,
     };
   } catch (error) {
     console.error('[Workflow] Error:', error);
@@ -176,4 +198,3 @@ Remember: You are a CONTINUOUS RESEARCH AGENT. Your goal is to populate your mem
     throw error;
   }
 }
-

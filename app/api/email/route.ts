@@ -7,7 +7,8 @@ import { listEmails, sendEmail } from '@/lib/integrations/google';
  */
 export async function GET(request: NextRequest) {
   try {
-    const userId = 'mock-user-id';
+    const { requireUserId } = await import('@/lib/auth');
+    const userId = await requireUserId();
     const { searchParams } = new URL(request.url);
     const query = searchParams.get('q') || '';
     const maxResults = parseInt(searchParams.get('maxResults') || '10', 10);
@@ -29,7 +30,8 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const userId = 'mock-user-id';
+    const { requireUserId } = await import('@/lib/auth');
+    const userId = await requireUserId();
     const body = await request.json();
     const { to, subject, body: emailBody, cc, bcc } = body;
 

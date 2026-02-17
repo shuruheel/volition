@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { decrypt } from '@/lib/crypto';
+import { requireUserId } from '@/lib/auth';
 import twilio from 'twilio';
 import { BrowserUseClient } from 'browser-use-sdk';
 import { openai } from '@ai-sdk/openai';
@@ -22,8 +23,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // TODO: Get userId from auth session
-    const userId = 'mock-user-id';
+    const userId = await requireUserId();
     
     switch (tool) {
       case 'openai':

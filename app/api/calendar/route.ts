@@ -7,7 +7,8 @@ import { listCalendarEvents, createCalendarEvent } from '@/lib/integrations/goog
  */
 export async function GET(request: NextRequest) {
   try {
-    const userId = 'mock-user-id';
+    const { requireUserId } = await import('@/lib/auth');
+    const userId = await requireUserId();
     const { searchParams } = new URL(request.url);
     const timeMin = searchParams.get('timeMin') || undefined;
     const timeMax = searchParams.get('timeMax') || undefined;
@@ -30,7 +31,8 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const userId = 'mock-user-id';
+    const { requireUserId } = await import('@/lib/auth');
+    const userId = await requireUserId();
     const body = await request.json();
     const { summary, start, end, description, location, attendees } = body;
 

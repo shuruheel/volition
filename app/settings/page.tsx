@@ -30,6 +30,17 @@ const TOOL_DEFINITIONS = [
     ],
   },
   {
+    id: 'anthropic',
+    name: 'Anthropic',
+    description: 'Claude Sonnet, Opus, and Haiku models',
+    icon: Brain,
+    color: 'text-orange-600',
+    bgColor: 'bg-orange-100 dark:bg-orange-900/20',
+    fields: [
+      { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'sk-ant-...' },
+    ],
+  },
+  {
     id: 'supermemory',
     name: 'Supermemory',
     description: 'Graph memory and long-term context for agents',

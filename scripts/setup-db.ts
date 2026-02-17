@@ -1,91 +1,80 @@
 #!/usr/bin/env tsx
 /**
  * Database setup script
- * Runs all pending migrations and seeds minimal demo data
+ * Runs all pending migrations against Neon Postgres and seeds demo data
  *
  * Usage:
- *   pnpm tsx scripts/setup-db.ts
+ *   pnpm db:setup
  */
 
-import { sql } from '../lib/db';
-import { ensureMigrations } from '../lib/db-migrate';
+import * as fs from 'fs';
+import * as path from 'path';
+import { neon } from '@neondatabase/serverless';
 
-async function seedDemoData() {
-  console.log('🌱 Seeding demo data...');
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error('❌ DATABASE_URL is required. Set it in .env.local');
+  process.exit(1);
+}
 
-  try {
-    // Create demo user
-    const userResult = await sql`
-      INSERT INTO users (email, name)
-      VALUES ('demo@example.com', 'Demo User')
-      ON CONFLICT (email) DO UPDATE SET name = 'Demo User'
-      RETURNING id
+const sql = neon(DATABASE_URL);
+
+async function runMigrations() {
+  console.log('📦 Running database migrations...');
+
+  // Create tracking table
+  await sql`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  // Discover migration files
+  const migrationDir = path.join(process.cwd(), 'db', 'migrations');
+  if (!fs.existsSync(migrationDir)) {
+    console.warn('[migrations] No db/migrations/ directory found, skipping');
+    return;
+  }
+
+  const files = fs
+    .readdirSync(migrationDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  if (files.length === 0) return;
+
+  // Check which migrations have already been applied
+  const applied = await sql`SELECT version FROM schema_migrations`;
+  const appliedSet = new Set((applied || []).map((m: any) => m.version));
+
+  // Run pending migrations in order
+  let ranCount = 0;
+  for (const file of files) {
+    const version = file.replace('.sql', '');
+    if (appliedSet.has(version)) continue;
+
+    const filePath = path.join(migrationDir, file);
+    const sqlContent = fs.readFileSync(filePath, 'utf-8');
+
+    // Execute raw SQL (neon http driver accepts raw strings)
+    await sql(sqlContent);
+    await sql`
+      INSERT INTO schema_migrations (version) VALUES (${version})
     `;
-    const userId = userResult[0].id;
-    console.log('  ✓ Created demo user:', userId);
+    console.log(`  ✓ Applied migration: ${file}`);
+    ranCount++;
+  }
 
-    // Create demo agent
-    const agentResult = await sql`
-      INSERT INTO agents (name, prompt, tools, status)
-      VALUES (
-        'Research Assistant',
-        'You are a helpful research assistant that can search the web, store information in memory, and provide insights.',
-        ARRAY['supermemory', 'browser'],
-        'idle'
-      )
-      ON CONFLICT DO NOTHING
-      RETURNING id
-    `;
-
-    if (agentResult.length > 0) {
-      const agentId = agentResult[0].id;
-      console.log('  ✓ Created demo agent:', agentId);
-
-      // Create demo activity
-      await sql`
-        INSERT INTO activities (agent_id, type, status, priority, payload)
-        VALUES (
-          ${agentId},
-          'research',
-          'completed',
-          'medium',
-          ${JSON.stringify({
-            title: 'Analyzed market trends',
-            description: 'Completed comprehensive analysis of Q4 market trends',
-            timestamp: new Date().toISOString(),
-          })}
-        )
-      `;
-      console.log('  ✓ Created demo activity');
-
-      // Create demo memory
-      await sql`
-        INSERT INTO memories (agent_id, provider_id, kind, metadata)
-        VALUES (
-          ${agentId},
-          'demo-memory-id',
-          'observation',
-          ${JSON.stringify({
-            content: 'User prefers detailed research reports with citations',
-            timestamp: new Date().toISOString(),
-          })}
-        )
-      `;
-      console.log('  ✓ Created demo memory');
-    } else {
-      console.log('  ℹ Demo agent already exists');
-    }
-
-    console.log('✅ Demo data seeded successfully');
-  } catch (error) {
-    console.error('❌ Seeding failed:', error);
-    throw error;
+  if (ranCount === 0) {
+    console.log('[migrations] Schema is up to date');
+  } else {
+    console.log(`[migrations] Applied ${ranCount} migration(s)`);
   }
 }
 
 async function checkHealth() {
   console.log('🏥 Checking database health...');
-
   try {
     const result = await sql`SELECT 1 as health`;
     if (result.length > 0) {
@@ -102,29 +91,20 @@ async function checkHealth() {
 async function main() {
   console.log('🚀 Starting database setup...\n');
 
-  // Check health first
   const isHealthy = await checkHealth();
   if (!isHealthy) {
-    console.error('\n❌ Database is not accessible. Check your DATABASE_URL (or omit it for local PGlite).');
+    console.error('\n❌ Database is not accessible. Check your DATABASE_URL.');
     process.exit(1);
   }
 
   console.log('');
-
-  // Run all pending migrations
-  console.log('📦 Running database migrations...');
-  await ensureMigrations(sql);
-
-  console.log('');
-
-  // Seed demo data
-  await seedDemoData();
+  await runMigrations();
 
   console.log('\n🎉 Database setup complete!');
   console.log('\nNext steps:');
   console.log('  1. Start the dev server: pnpm dev');
   console.log('  2. Visit http://localhost:3000');
-  console.log('  3. Configure tools in Settings page');
+  console.log('  3. Sign in with Google');
 }
 
 main()

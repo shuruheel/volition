@@ -9,7 +9,8 @@ interface RouteContext {
 
 /**
  * POST /api/agents/:id/stop
- * Stop an agent (changes status to 'idle')
+ * Disable an agent — sets enabled=false, status=idle,
+ * disables schedules, clears agent_status, and logs activity.
  */
 export async function POST(
   request: NextRequest,
@@ -17,89 +18,93 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
-    
+
     // Fetch agent
     const agents = await sql<Agent[]>`
       SELECT * FROM agents WHERE id = ${id}
     `;
-    
+
     if (agents.length === 0) {
       return NextResponse.json(
         { error: 'Agent not found' },
         { status: 404 }
       );
     }
-    
+
     const agent = agents[0];
-    
-    // If already idle, just return success (idempotent)
-    if (agent.status === 'idle') {
+
+    // If already disabled and idle, return success (idempotent)
+    if (!agent.enabled && agent.status === 'idle') {
       return NextResponse.json({
         agent,
-        message: 'Agent is already idle',
+        message: 'Agent is already disabled',
       });
     }
-    
-    // Update status to idle
+
+    // Set enabled=false, status=idle
     const updatedAgents = await sql<Agent[]>`
       UPDATE agents
-      SET status = 'idle', updated_at = NOW()
+      SET enabled = false, status = 'idle', updated_at = NOW()
       WHERE id = ${id}
       RETURNING *
     `;
-    
     const updatedAgent = updatedAgents[0];
-    
-    // Clear agent status
+
+    // Disable all schedules for this agent
+    await sql`
+      UPDATE agent_schedules
+      SET enabled = false
+      WHERE agent_id = ${id}
+    `;
+
+    // Clear agent_status
     await clearAgentStatus(id);
-    
-    // Log stop activity (only if it wasn't already idle)
-    if (agent.status !== 'idle') {
-      try {
+
+    // Log disable activity
+    try {
+      await sql`
+        INSERT INTO activities (agent_id, type, status, payload)
+        VALUES (
+          ${id},
+          'agent_stopped',
+          'completed',
+          ${JSON.stringify({
+            disabledAt: new Date().toISOString(),
+            previousStatus: agent.status,
+            previousEnabled: agent.enabled,
+          })}
+        )
+      `;
+    } catch (e: any) {
+      // Fallback if agent_stopped type not in CHECK constraint
+      if (e && e.code === '23514') {
         await sql`
           INSERT INTO activities (agent_id, type, status, payload)
           VALUES (
             ${id},
-            'agent_stopped',
+            'research',
             'completed',
             ${JSON.stringify({
-              stoppedAt: new Date().toISOString(),
+              disabledAt: new Date().toISOString(),
               previousStatus: agent.status,
+              note: 'Agent disabled by user',
             })}
           )
         `;
-      } catch (e: any) {
-        // If type not allowed due to outdated CHECK, fall back to 'research'
-        if (e && e.code === '23514') {
-          await sql`
-            INSERT INTO activities (agent_id, type, status, payload)
-            VALUES (
-              ${id},
-              'research',
-              'completed',
-              ${JSON.stringify({
-                stoppedAt: new Date().toISOString(),
-                previousStatus: agent.status,
-                note: 'Fallback type used due to missing CHECK update for agent_stopped',
-              })}
-            )
-          `;
-        } else {
-          throw e;
-        }
+      } else {
+        throw e;
       }
     }
-    
+
     return NextResponse.json({
       agent: updatedAgent,
-      message: 'Agent stopped successfully',
+      message: 'Agent disabled successfully',
     });
   } catch (error) {
-    console.error('Failed to stop agent:', error);
+    console.error('Failed to disable agent:', error);
     return NextResponse.json(
-      { error: 'Failed to stop agent' },
+      { error: 'Failed to disable agent' },
       { status: 500 }
     );
   }
 }
-
