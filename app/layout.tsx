@@ -18,8 +18,8 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: "Agent Dashboard - AI Agent Management",
-  description: "Manage and monitor your AI agents with real-time insights",
+  title: "Volition - AI Agent Orchestration",
+  description: "Open-source AI agent orchestration with durable workflows and human-in-the-loop approval",
   generator: "v0.app",
 }
 

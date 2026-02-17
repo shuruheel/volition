@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
 async function testOpenAI() {
   try {
     const result = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: openai('gpt-5.2-2025-12-11'),
       prompt: 'Say "test successful" if you can read this.',
       maxTokens: 10,
     });

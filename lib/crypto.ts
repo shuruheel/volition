@@ -17,7 +17,7 @@ function getEncryptionKey(): Buffer {
   }
   
   // Derive a key from the secret
-  const salt = Buffer.from('agent-dashboard-salt'); // Fixed salt for deterministic key
+  const salt = Buffer.from('volition-salt'); // Fixed salt for deterministic key
   return scryptSync(secret, salt, KEY_LENGTH);
 }
 

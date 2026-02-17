@@ -4,53 +4,84 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an AI Agent Dashboard built with Next.js 16, Vercel AI SDK 6, and Neon Postgres. It provides an orchestration platform for AI agents with integrated tools (Supermemory for graph memory, Browser-Use Cloud for browser automation, and Twilio for voice calls).
+Volition — open-source AI agent orchestration platform built with Next.js 16, Vercel AI SDK 6, Vercel Workflow, and Neon Postgres. Orchestration platform for AI agents with integrated tools: Firecrawl (web research), Supermemory (graph memory), Google APIs (Gmail + Calendar), Telegram (bot messaging), Browser-Use Cloud (browser automation), and Twilio (voice calls).
 
 ## Development Commands
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Development server (http://localhost:3000)
-pnpm dev
-
-# Build production bundle (must succeed before review)
-pnpm build
-
-# Start production server
-pnpm start
-
-# Run linter
-pnpm lint
-
-# Database operations
-pnpm db:setup      # Run migrations and seed demo data
-pnpm db:migrate    # Run migrations only
+pnpm install          # Install dependencies
+pnpm dev              # Dev server at http://localhost:3000
+pnpm build            # Production build (must succeed before review)
+pnpm lint             # ESLint
+pnpm db:setup         # Run migrations + seed demo data
+pnpm db:migrate       # Run migrations only
 ```
+
+No test framework is configured yet. Verify changes manually via `pnpm dev` and `pnpm build`.
 
 ## Architecture
 
 ### Core Stack
-- **Frontend**: Next.js 16 (App Router, React Server Components), React 19.2.0
-- **Backend**: Next.js Route Handlers (in `app/api/`)
-- **Database**: Neon Postgres serverless with `@neondatabase/serverless` driver
-- **AI**: Vercel AI SDK 6 (`generateText`, `streamText`, multi-step tool calling)
-- **Styling**: Tailwind CSS 4, shadcn/ui components
+- **Runtime**: Next.js 16 (App Router, RSC), React 19.2.0
+- **Agent Execution**: Vercel Workflow (`'use workflow'` / `'use step'` directives) for durable, resumable agent execution
+- **AI**: OpenAI GPT-5.2 via raw OpenAI SDK inside workflow steps (not AI SDK `tool()` helper)
+- **Database**: Neon Postgres serverless via `@neondatabase/serverless` HTTP driver
+- **Styling**: Tailwind CSS 4, shadcn/ui (New York style, RSC-enabled)
 
-### Directory Structure
+### Agent Execution: Vercel Workflow
+
+The execution engine is in `lib/ai/workflows/`:
+
+- **`agent-workflow.ts`**: Main workflow function using `'use workflow'` directive. Runs a step loop where each step is one LLM decision cycle with tool calling.
+- **`steps.ts`**: Reusable durable steps marked with `'use step'`. Each step gets automatic retries and durability. Key steps: `executeLLMDecisionStep`, `fetchAgentStep`, `planResearchQueriesStep`, `executeResearchStep`, `executeBrowserStep`, `logActivityStep`. All workflow tool definitions (research, email, calendar, telegram, browser) are inline here.
+- **`hooks.ts`**: Human-in-the-loop hooks using `defineHook()` from `workflow`. Hooks pause the workflow until an external event resumes it: `userInputHook`, `phoneCallHook`, `emailApprovalHook`, `activityApprovalHook`.
+
+**Critical**: Tools inside workflows are defined as **raw OpenAI function call format** (JSON Schema with `parameters` key), NOT using the AI SDK `tool()` helper.
+
+### Configuration
+
+- `next.config.mjs`: Wrapped with `withWorkflow()` from `workflow/next`
+- `tsconfig.json`: Includes `"workflow"` plugin alongside `"next"` plugin
+- `typescript.ignoreBuildErrors: true` in next config
+
+### Database
+
+`lib/db.ts` exports:
+- `sql` — Neon HTTP client (tagged template) for most queries. Use this by default.
+- `getPool()` — Lazy Pool client for transactions. In workflow steps, always use `getPool()` not the direct `pool` export (which throws).
+
+Key tables: `agents`, `activities`, `memories`, `calls`, `tool_configs`, `agent_status`, `users`, `telegram_users`
+
+Activity types: `research`, `email_sent`, `email_received`, `phone_call`, `post_call_summary`, `calendar_event_added`, `calendar_event_modified`, `webpage_viewed`, `journal_read`, `task_completed`, `agent_stopped`, `user_input`, `user_message`, `telegram_message_sent`, `telegram_message_received`
+
+Migrations are in `db/migrations/` (001 through 008). Run sequentially.
+
+### Integration Modules
+
+- **`lib/integrations/firecrawl.ts`**: Web search + scraping via Firecrawl API (`/search`, `/scrape`). `searchAndScrape()` combines both in one request.
+- **`lib/integrations/supermemory.ts`**: Document storage and semantic search via Supermemory v4. `storeMarkdown()` stores content and creates a local `memories` table reference. `searchMemories()` queries by agent with metadata filters.
+- **`lib/integrations/google.ts`**: Gmail and Google Calendar via `googleapis` NPM package. OAuth2 flow with token refresh. Functions: `sendEmail()`, `listEmails()`, `createCalendarEvent()`, `listCalendarEvents()`.
+- **`lib/integrations/telegram.ts`**: Telegram bot via grammY. `sendTelegramMessage()`, `handleIncomingMessage()`, `linkTelegramUser()`.
+- Browser automation via Browser-Use Cloud SDK (inline in workflow steps).
+- Twilio voice integration via `app/api/twilio/` routes.
+
+### Directory Layout
 
 ```
 app/
-├── api/                    # Backend Route Handlers
-│   ├── agents/            # Agent CRUD operations
-│   ├── activities/        # Activity feed, approvals, modifications
-│   ├── metrics/           # Dashboard metrics (spend, tasks, approvals, memories)
-│   ├── memories/          # Supermemory integration (store/search)
-│   ├── browser/           # Browser-Use Cloud tasks
-│   ├── calls/             # Twilio outbound calls and summaries
-│   ├── twilio/            # Twilio webhooks (voice, status, stream WebSocket)
-│   └── settings/          # Tool configuration (encrypted API keys)
+├── api/                    # Route Handlers (REST endpoints)
+│   ├── agents/            # Agent CRUD + start/stop
+│   ├── activities/        # Activity feed, approvals
+│   ├── auth/google/       # Google OAuth flow
+│   ├── metrics/           # Dashboard metrics
+│   ├── memories/          # Supermemory search/store
+│   ├── email/             # Gmail send/search
+│   ├── calendar/          # Google Calendar list/create
+│   ├── browser/           # Browser-Use tasks
+│   ├── calls/             # Twilio outbound calls
+│   ├── twilio/            # Twilio webhooks (voice, status, stream stub)
+│   ├── telegram/          # Telegram webhook, send, setup
+│   └── settings/          # Encrypted tool config (API keys)
 ├── dashboard/             # Main dashboard UI
 ├── chat/                  # Chat interface
 ├── graph/                 # Knowledge graph visualization
@@ -58,215 +89,74 @@ app/
 
 lib/
 ├── ai/
-│   ├── agent.ts          # Agent orchestration (createAgentTools, executeAgentTask, generateSummary)
-│   └── tools/            # Custom AI SDK tools (browserTaskTool, logActivityTool)
-├── db.ts                 # Neon serverless driver, TypeScript types for tables
-├── crypto.ts             # AES-GCM encryption for tool_configs
-└── utils.ts              # Shared utilities
+│   ├── workflows/         # Vercel Workflow (primary execution engine)
+│   │   ├── agent-workflow.ts
+│   │   ├── steps.ts
+│   │   └── hooks.ts
+│   ├── prompts.ts         # System prompt helpers (withHITLGuidelines)
+│   ├── chat-history.ts    # Chat turn retrieval
+│   ├── research-context.ts # Research session context builder
+│   └── utils.ts           # generateSummary helper
+├── integrations/
+│   ├── firecrawl.ts       # Firecrawl search + scrape
+│   ├── supermemory.ts     # Supermemory storage + search
+│   ├── google.ts          # Gmail + Google Calendar (OAuth2)
+│   └── telegram.ts        # Telegram bot (grammY)
+├── db.ts                  # Neon client, TypeScript types for all tables
+├── crypto.ts              # AES-GCM encryption for tool_configs
+├── agent-status.ts        # Agent execution status tracking
+└── utils.ts               # cn() and shared utilities
 
-db/
-└── migrations/           # SQL migration files (001_init.sql)
+db/migrations/             # SQL migrations (001-008)
 ```
-
-### Database Schema
-
-Key tables in Neon Postgres:
-- **users**: User accounts (minimal, auth deferred to v2)
-- **agents**: id, name, prompt, status, tools (string[]), created_at, updated_at
-- **activities**: Unified feed with type, status, priority, payload (jsonb)
-- **memories**: Supermemory references (provider_id, kind, metadata)
-- **calls**: Twilio call records (to_number, status, twilio_sid, summary)
-- **tool_configs**: Encrypted API keys per user/tool (data_encrypted with AES-GCM)
-
-Activity types displayed in feed: `research`, `email_sent`, `phone_call`, `post_call_summary`, `calendar_event_added`, `calendar_event_modified`, `webpage_viewed`, `journal_read`
-
-Types excluded (high frequency/noise): `video_watched`, `financial`, `image_seen`, `email_read`
-
-## AI Agent Orchestration
-
-### Agent Execution Pattern
-
-Agents use Vercel AI SDK 6 with `generateText` or `streamText`. Tools are dynamically registered based on agent permissions:
-
-```typescript
-// lib/ai/agent.ts
-export function createAgentTools(agent: Agent) {
-  const tools: Record<string, any> = {};
-
-  if (agent.tools.includes('supermemory')) {
-    Object.assign(tools, supermemoryTools(process.env.SUPERMEMORY_API_KEY));
-  }
-
-  if (agent.tools.includes('browser')) {
-    tools.browserTask = browserTaskTool;
-  }
-
-  tools.logActivity = logActivityTool; // Always included
-
-  return tools;
-}
-```
-
-Use `executeAgentTask` (streaming) or `executeAgentTaskSync` (non-streaming) to run agents with observability via `onStepFinish` callbacks.
-
-### Tool Creation
-
-All tools follow this structure:
-- **description**: Helps LLM decide when to use the tool
-- **inputSchema**: Zod schema for input validation
-- **execute**: Async function performing the action
-
-Tools can access context via `experimental_context` (e.g., `agentId`, `tools`).
-
-Example tools:
-- `lib/ai/tools/browser-task.ts`: Browser automation via Browser-Use Cloud SDK
-- `lib/ai/tools/log-activity.ts`: Log activities to database
-
-### Supermemory Integration
-
-Memory tools are imported from `@supermemory/tools/ai-sdk` and provide:
-- `search_memories`: Semantic search in agent's memory graph
-- `store_memory`: Store new memories
-- `list_memories`: Retrieve memories by type
 
 ## Environment Variables
 
-Required variables (see `env.example` for full list):
+Required (see `env.example`):
 
 ```bash
-# AI
 OPENAI_API_KEY=sk-...
-
-# Database
 DATABASE_URL=postgresql://...
 DATABASE_URL_POOLED=postgresql://...?pgbouncer=true
+APP_ENCRYPTION_KEY=...             # 32-byte hex: openssl rand -hex 32
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
 
-# Integrations
+Optional integrations:
+
+```bash
+FIRECRAWL_API_KEY=fc_...
 SUPERMEMORY_API_KEY=sm_...
 BROWSER_USE_API_KEY=bu_...
 TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...
 TWILIO_PHONE_NUMBER=+1...
-
-# Security
-APP_ENCRYPTION_KEY=...  # 32-byte hex (generate: openssl rand -hex 32)
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+TELEGRAM_BOT_TOKEN=...
 ```
 
-Never expose secrets client-side. API keys are stored encrypted in `tool_configs` table using AES-GCM (see `lib/crypto.ts`).
+## Code Patterns
 
-## Code Style
+### Route Handlers
 
-- **TypeScript strict mode**: All code fully typed
-- **Async/await**: No `.then()` chains
-- **Zod schemas**: Validate all external inputs (API routes, tool inputs)
-- **Error handling**: Always handle errors in Route Handlers with try/catch
-- **File naming**: `kebab-case.tsx` for components, components are `PascalCase`
-- **Functional components**: React hooks only, no class components
+All API routes use `NextRequest`/`NextResponse` with try/catch. Use `sql` tagged template for parameterized queries (prevents SQL injection).
 
-## Route Handler Patterns
+### Adding New Workflow Tools
 
-All API routes in `app/api/` use Next.js 16 Route Handlers:
-
-```typescript
-import { NextRequest, NextResponse } from 'next/server';
-import { sql } from '@/lib/db';
-
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const limit = searchParams.get('limit') || '50';
-
-    const results = await sql`SELECT * FROM activities LIMIT ${limit}`;
-
-    return NextResponse.json({ data: results });
-  } catch (error) {
-    console.error('Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-```
-
-Use `sql` tagged template for parameterized queries (prevents SQL injection).
-
-## Key Integration Points
-
-### Supermemory (Graph Memory)
-- Tools integrated via `@supermemory/tools/ai-sdk`
-- Memory references stored in `memories` table
-- Search endpoint: `GET /api/memories/search`
-
-### Browser-Use Cloud (Browser Automation)
-- Custom AI SDK tool in `lib/ai/tools/browser-task.ts`
-- Direct API: `POST /api/browser/task`
-- Supports synchronous (`wait=true`) and async task execution
-
-### Twilio + OpenAI Realtime (Voice Calls)
-- Outbound calls: `POST /api/calls`
-- TwiML webhook: `POST /api/twilio/voice` (returns `<Connect><Stream>`)
-- Status callbacks: `POST /api/twilio/status`
-- WebSocket proxy: `app/api/twilio/stream/route.ts` (stub for custom server)
-- Call summaries: `POST /api/calls/:id/summary` (uses `generateSummary` helper)
-
-## Testing & Deployment
-
-- Run `pnpm lint` before committing
-- Test affected routes in `pnpm dev` (dashboard metrics, chat drawer, agent management)
-- For Twilio webhooks, use ngrok for local testing: `ngrok http 3000`
-- Deploy to Vercel: Push to GitHub, import project, add environment variables
-
-## Important Notes
-
-### Authentication
-Currently using mock auth (`userId = 'mock-user-id'`). Real auth (Neon Auth or Auth0) deferred to v2.
-
-### WebSocket Proxy Limitation
-`app/api/twilio/stream/route.ts` is a stub because Next.js Route Handlers don't natively support WebSocket upgrades. For full Twilio integration, deploy custom Node.js server or use Vercel Edge Functions with WebSocket support.
-
-### Usage Tracking
-Total Spend metric is mocked. For v2, store token usage from `onStepFinish` callbacks and calculate costs.
+New tools for agent workflows must be defined **inline in `executeLLMDecisionStep`** using raw OpenAI function call JSON Schema format, not the AI SDK `tool()` helper. Add the tool definition to the `tools` array and a handler in the `switch` statement. See `CONTRIBUTING.md` for detailed instructions.
 
 ### Commit Conventions
-Follow existing commit prefixes: `feat:`, `chore(next):`, `refactor:`. Keep subjects under 80 characters.
 
-## Additional Documentation
+Prefixes: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`. Keep subjects under 80 characters.
 
-Detailed architecture docs in `.cursor/rules/`:
-- `01-project-architecture.mdc`: Tech stack and project structure
-- `02-neon-database.mdc`: Database patterns and migrations
-- `03-ai-agents.mdc`: Agent orchestration and tool creation
-- `04-route-handlers.mdc`: API route patterns
-- `05-integrations.mdc`: External service integrations
-- `06-frontend-components.mdc`: UI component patterns
+## Important Caveats
 
-Vendor documentation in `docs/`:
-- `nextjs-16/`: Next.js 16 features
-- `vercel-ai-sdk-6/`: AI SDK patterns
-- `supermemory/`: Memory tools and SDKs
-- `browser-use/`: Browser automation
-- `twilio/`: Voice API integration
-- `neon/`: Postgres serverless features
+- **Auth**: Mock auth (`userId = 'mock-user-id'`). Real auth deferred to v2.
+- **WebSocket**: `app/api/twilio/stream/route.ts` is a stub — Next.js Route Handlers don't support WebSocket upgrades.
+- **Spend tracking**: Total Spend metric is mocked.
+- **Workflow tool format**: Workflow tools must use raw OpenAI JSON Schema format. Do NOT use AI SDK `tool()` helper in workflow files.
 
-## Quick Reference
+## Supplemental Docs
 
-**Create a new agent:**
-```bash
-curl -X POST http://localhost:3000/api/agents \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Research Bot", "prompt": "You are a research assistant", "tools": ["supermemory", "browser"]}'
-```
-
-**Execute a browser task:**
-```bash
-curl -X POST http://localhost:3000/api/browser/task \
-  -H "Content-Type: application/json" \
-  -d '{"task": "Go to example.com and extract the main heading", "wait": true}'
-```
-
-**Get dashboard metrics:**
-```bash
-curl http://localhost:3000/api/metrics/key
-```
+- `docs/` — Vendor documentation (Next.js 16, AI SDK 6, Supermemory, Browser-Use, Twilio, Neon)

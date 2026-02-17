@@ -46,7 +46,7 @@ export default function LoginPage() {
             </div>
           </div>
           <div>
-            <CardTitle className="text-2xl">Agent Dashboard</CardTitle>
+            <CardTitle className="text-2xl">Volition</CardTitle>
             <CardDescription>Sign in to manage your AI agents</CardDescription>
           </div>
         </CardHeader>

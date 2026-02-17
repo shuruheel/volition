@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Validate tool name
-    const validTools = ['openai', 'neon', 'supermemory', 'browser_use', 'twilio'];
+    const validTools = ['openai', 'neon', 'supermemory', 'browser_use', 'twilio', 'google_oauth', 'telegram'];
     if (!validTools.includes(tool)) {
       return NextResponse.json(
         { error: 'Invalid tool name' },

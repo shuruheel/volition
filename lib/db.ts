@@ -92,6 +92,7 @@ export interface Activity {
   type:
     | 'research'
     | 'email_sent'
+    | 'email_received'
     | 'phone_call'
     | 'post_call_summary'
     | 'calendar_event_added'
@@ -101,7 +102,9 @@ export interface Activity {
     | 'task_completed'
     | 'agent_stopped'
     | 'user_input'
-    | 'user_message';
+    | 'user_message'
+    | 'telegram_message_sent'
+    | 'telegram_message_received';
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   payload: Record<string, any>;
@@ -132,10 +135,18 @@ export interface Call {
 export interface ToolConfig {
   id: string;
   user_id: string;
-  tool: 'openai' | 'neon' | 'supermemory' | 'browser_use' | 'twilio';
+  tool: 'openai' | 'neon' | 'supermemory' | 'browser_use' | 'twilio' | 'google_oauth' | 'telegram';
   data_encrypted: string;
   created_at: Date;
   updated_at: Date;
+}
+
+export interface TelegramUser {
+  id: string;
+  telegram_user_id: number;
+  telegram_username: string | null;
+  agent_id: string | null;
+  created_at: Date;
 }
 
 /**

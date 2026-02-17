@@ -10,7 +10,7 @@ export async function generateSummary(
 ): Promise<string> {
   try {
     const result = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: openai('gpt-5.2-2025-12-11'),
       prompt: `Summarize the following content concisely:\n\n${context ? `Context: ${context}\n\n` : ''}${content}`,
       temperature: 0.3,
     });
@@ -32,7 +32,7 @@ export async function extractStructuredData<T>(
 ): Promise<T> {
   try {
     const result = await generateText({
-      model: openai('gpt-4o'),
+      model: openai('gpt-5.2-2025-12-11'),
       prompt: `${instructions || 'Extract structured data from the following text:'}\n\n${text}`,
       temperature: 0,
     });

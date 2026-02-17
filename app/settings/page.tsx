@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Brain, Globe, Phone, Mail, Database, Key, CheckCircle2, XCircle, Loader2 } from "lucide-react"
+import { Brain, Globe, Phone, Mail, Database, Key, CheckCircle2, XCircle, Loader2, Calendar, Send } from "lucide-react"
 
 interface ToolConfig {
   id: string
@@ -74,6 +74,28 @@ const TOOL_DEFINITIONS = [
       { name: 'databaseUrl', label: 'Database URL', type: 'password', placeholder: 'postgresql://...' },
     ],
     info: 'Usually configured via environment variables',
+  },
+  {
+    id: 'google_oauth',
+    name: 'Google (Gmail + Calendar)',
+    description: 'Send/search emails and manage calendar events via Google APIs',
+    icon: Calendar,
+    color: 'text-red-600',
+    bgColor: 'bg-red-100 dark:bg-red-900/20',
+    fields: [],
+    oauth: true,
+    info: 'Requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables',
+  },
+  {
+    id: 'telegram',
+    name: 'Telegram Bot',
+    description: 'Send and receive messages via Telegram bot',
+    icon: Send,
+    color: 'text-sky-600',
+    bgColor: 'bg-sky-100 dark:bg-sky-900/20',
+    fields: [
+      { name: 'botToken', label: 'Bot Token', type: 'password', placeholder: '123456:ABC-DEF...' },
+    ],
   },
 ]
 
@@ -218,6 +240,28 @@ export default function SettingsPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
+                    {'oauth' in tool && tool.oauth ? (
+                      <div className="flex flex-wrap gap-2 pt-2">
+                        <Button
+                          size="sm"
+                          onClick={() => window.location.href = '/api/auth/google'}
+                          disabled={configured}
+                        >
+                          {configured ? (
+                            <>
+                              <CheckCircle2 className="h-4 w-4 mr-2" />
+                              Connected
+                            </>
+                          ) : (
+                            <>
+                              <Key className="h-4 w-4 mr-2" />
+                              Connect Google Account
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    ) : (
+                    <>
                     {tool.fields.map((field) => (
                       <div key={field.name} className="space-y-2">
                         <Label htmlFor={`${tool.id}-${field.name}`}>{field.label}</Label>
@@ -283,6 +327,8 @@ export default function SettingsPage() {
                         )}
                         <p className="text-sm">{testResult.message}</p>
                       </div>
+                    )}
+                    </>
                     )}
                   </div>
                 </CardContent>

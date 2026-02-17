@@ -29,3 +29,17 @@ next-env.d.ts
 .venv/
 .pnpm-store/
 .env.local
+
+# editors
+.idea/
+.vscode/
+*.swp
+
+# os
+.DS_Store
+
+# cursor
+.cursor/
+
+# coverage
+coverage/

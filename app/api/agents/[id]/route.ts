@@ -51,40 +51,29 @@ export async function PATCH(
     const body = await request.json();
     const { name, prompt, status, tools } = body;
     
-    // Build update query dynamically based on provided fields
-    const updates: string[] = [];
-    const values: any[] = [];
-    
-    if (name !== undefined) {
-      updates.push('name = $' + (values.length + 1));
-      values.push(name);
-    }
-    if (prompt !== undefined) {
-      updates.push('prompt = $' + (values.length + 1));
-      values.push(prompt);
-    }
-    if (status !== undefined) {
-      updates.push('status = $' + (values.length + 1));
-      values.push(status);
-    }
-    if (tools !== undefined) {
-      updates.push('tools = $' + (values.length + 1));
-      values.push(tools);
-    }
-    
-    if (updates.length === 0) {
+    if (name === undefined && prompt === undefined && status === undefined && tools === undefined) {
       return NextResponse.json(
         { error: 'No fields to update' },
         { status: 400 }
       );
     }
-    
-    // Add id to the end
-    values.push(id);
-    
+
+    // Fetch current values to merge with provided fields
+    const [current] = await sql<Agent[]>`SELECT * FROM agents WHERE id = ${id}`;
+    if (!current) {
+      return NextResponse.json(
+        { error: 'Agent not found' },
+        { status: 404 }
+      );
+    }
+
     const result = await sql<Agent[]>`
-      UPDATE agents
-      SET ${sql.unsafe(updates.join(', '))}
+      UPDATE agents SET
+        name = ${name ?? current.name},
+        prompt = ${prompt ?? current.prompt},
+        status = ${status ?? current.status},
+        tools = ${tools ?? current.tools},
+        updated_at = NOW()
       WHERE id = ${id}
       RETURNING *
     `;

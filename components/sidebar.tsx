@@ -30,8 +30,8 @@ export function Sidebar() {
             <Brain className="h-5 w-5 text-sidebar-primary" />
           </div>
           <div>
-            <h1 className="font-semibold text-sidebar-foreground">Agent Dashboard</h1>
-            <p className="text-xs text-sidebar-foreground/60">AI Management</p>
+            <h1 className="font-semibold text-sidebar-foreground">Volition</h1>
+            <p className="text-xs text-sidebar-foreground/60">Agent Orchestration</p>
           </div>
         </div>
       </div>

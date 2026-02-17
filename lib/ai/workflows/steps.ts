@@ -6,7 +6,7 @@
 import { sql } from '@/lib/db';
 import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
 import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
-import { userInputHook, phoneCallHook, activityApprovalHook } from './hooks';
+import { userInputHook, phoneCallHook, emailApprovalHook, activityApprovalHook } from './hooks';
 import { getStepMetadata } from 'workflow';
 
 /**
@@ -71,7 +71,7 @@ Return a JSON object with a "queries" array containing 3-5 search query strings.
 
   try {
     const completion = await openai.chat.completions.create({
-      model: 'gpt-5-2025-08-07',
+      model: 'gpt-5.2-2025-12-11',
       messages: [
         {
           role: 'system',
@@ -659,6 +659,83 @@ export async function executeLLMDecisionStep(args: {
     },
   ];
 
+  // Conditionally add Google tools (email + calendar)
+  if (args.enabledTools.includes('google')) {
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'sendEmail',
+          description: 'Send an email via Gmail. Requires HITL approval — the workflow will pause until the user approves.',
+          parameters: {
+            type: 'object',
+            properties: {
+              to: { type: 'string', description: 'Recipient email address' },
+              subject: { type: 'string', description: 'Email subject line' },
+              body: { type: 'string', description: 'Email body (HTML supported)' },
+              cc: { type: 'string', description: 'CC email address (optional)' },
+              bcc: { type: 'string', description: 'BCC email address (optional)' },
+            },
+            required: ['to', 'subject', 'body'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'searchEmails',
+          description: 'Search Gmail for emails matching a query. Returns subject, from, date, and snippet.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Gmail search query (e.g., "from:user@example.com subject:invoice")' },
+              maxResults: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+            },
+            required: ['query'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'createCalendarEvent',
+          description: 'Create a Google Calendar event. Requires HITL approval — the workflow will pause until the user approves.',
+          parameters: {
+            type: 'object',
+            properties: {
+              summary: { type: 'string', description: 'Event title' },
+              start: { type: 'string', description: 'Start time in ISO 8601 format (e.g., "2026-03-01T10:00:00-05:00")' },
+              end: { type: 'string', description: 'End time in ISO 8601 format' },
+              description: { type: 'string', description: 'Event description (optional)' },
+              location: { type: 'string', description: 'Event location (optional)' },
+              attendees: { type: 'array', items: { type: 'string' }, description: 'Attendee email addresses (optional)' },
+            },
+            required: ['summary', 'start', 'end'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'listCalendarEvents',
+          description: 'List upcoming Google Calendar events.',
+          parameters: {
+            type: 'object',
+            properties: {
+              timeMin: { type: 'string', description: 'Start of time range in ISO 8601 (defaults to now)' },
+              timeMax: { type: 'string', description: 'End of time range in ISO 8601 (optional)' },
+              maxResults: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+            },
+            additionalProperties: false,
+          },
+        },
+      }
+    );
+  }
+
   // Conditionally add browser tool
   if (args.enabledTools.includes('browser')) {
     tools.push({
@@ -673,6 +750,27 @@ export async function executeLLMDecisionStep(args: {
             maxSteps: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
           },
           required: ['task'],
+          additionalProperties: false,
+        },
+      },
+    });
+  }
+
+  // Conditionally add Telegram tool
+  if (args.enabledTools.includes('telegram')) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'sendTelegramMessage',
+        description: 'Send a message to a linked Telegram user. If chatId is not provided, looks up the linked chat from telegram_users table.',
+        parameters: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'Message text to send' },
+            chatId: { type: 'number', description: 'Telegram chat ID (optional — auto-resolved from linked users if omitted)' },
+            parseMode: { type: 'string', enum: ['HTML', 'MarkdownV2'], description: 'Message format (optional)' },
+          },
+          required: ['text'],
           additionalProperties: false,
         },
       },
@@ -703,7 +801,7 @@ export async function executeLLMDecisionStep(args: {
   for (let turn = 0; turn < maxTurns; turn++) {
     // Call OpenAI API
     const completion = await openai.chat.completions.create({
-      model: 'gpt-5-2025-08-07', // Use latest gpt-4o with strong tool calling
+      model: 'gpt-5.2-2025-12-11',
       messages: conversationMessages,
       tools,
       tool_choice: 'auto',
@@ -870,6 +968,158 @@ export async function executeLLMDecisionStep(args: {
         }
         case 'browserTask': {
           result = await executeBrowserStep(agentId, args.task, args.maxSteps || 10);
+          break;
+        }
+        case 'sendEmail': {
+          // HITL: require approval before sending
+          const emailActivityId = await createPendingActivityStep(
+            agentId,
+            'email_sent',
+            'high',
+            { to: args.to, subject: args.subject, body: args.body, cc: args.cc, bcc: args.bcc }
+          );
+
+          await updateAgentStatusStep(agentId, {
+            status: 'active',
+            currentActivity: `Waiting for approval to send email to ${args.to}`,
+            currentTool: 'sendEmail',
+          });
+
+          const { stepId: emailStepId } = getStepMetadata();
+          const emailToken = `agent-${agentId}-activity-${emailActivityId}-step-${emailStepId}`;
+
+          try {
+            const emailEvents = emailApprovalHook.create({ token: emailToken });
+            for await (const event of emailEvents) {
+              if (event.approved) {
+                const { sendEmail: gmailSend } = await import('@/lib/integrations/google');
+                const userId = 'mock-user-id';
+                const emailResult = await gmailSend(userId, {
+                  to: args.to,
+                  subject: args.subject,
+                  body: args.body,
+                  cc: args.cc,
+                  bcc: args.bcc,
+                });
+                await updateActivityStatusStep(emailActivityId, 'approved');
+                result = { success: true, ...emailResult };
+              } else {
+                await updateActivityStatusStep(emailActivityId, 'rejected');
+                result = { success: false, error: 'Email sending was rejected by user' };
+              }
+              break;
+            }
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to get email approval' };
+          }
+          break;
+        }
+        case 'searchEmails': {
+          try {
+            const { listEmails } = await import('@/lib/integrations/google');
+            const userId = 'mock-user-id';
+            const emails = await listEmails(userId, {
+              query: args.query,
+              maxResults: args.maxResults || 10,
+            });
+            result = { success: true, emails, count: emails.length };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to search emails' };
+          }
+          break;
+        }
+        case 'createCalendarEvent': {
+          // HITL: require approval before creating event
+          const calActivityId = await createPendingActivityStep(
+            agentId,
+            'calendar_event_added',
+            'high',
+            { summary: args.summary, start: args.start, end: args.end, description: args.description, attendees: args.attendees }
+          );
+
+          await updateAgentStatusStep(agentId, {
+            status: 'active',
+            currentActivity: `Waiting for approval to create event: ${args.summary}`,
+            currentTool: 'createCalendarEvent',
+          });
+
+          const { stepId: calStepId } = getStepMetadata();
+          const calToken = `agent-${agentId}-activity-${calActivityId}-step-${calStepId}`;
+
+          try {
+            const calEvents = activityApprovalHook.create({ token: calToken });
+            for await (const event of calEvents) {
+              if (event.approved) {
+                const { createCalendarEvent: gcalCreate } = await import('@/lib/integrations/google');
+                const userId = 'mock-user-id';
+                const calResult = await gcalCreate(userId, {
+                  summary: args.summary,
+                  start: args.start,
+                  end: args.end,
+                  description: args.description,
+                  location: args.location,
+                  attendees: args.attendees,
+                });
+                await updateActivityStatusStep(calActivityId, 'approved');
+                result = { success: true, ...calResult };
+              } else {
+                await updateActivityStatusStep(calActivityId, 'rejected');
+                result = { success: false, error: 'Calendar event creation was rejected by user' };
+              }
+              break;
+            }
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to get calendar event approval' };
+          }
+          break;
+        }
+        case 'listCalendarEvents': {
+          try {
+            const { listCalendarEvents: gcalList } = await import('@/lib/integrations/google');
+            const userId = 'mock-user-id';
+            const events = await gcalList(userId, {
+              timeMin: args.timeMin,
+              timeMax: args.timeMax,
+              maxResults: args.maxResults || 20,
+            });
+            result = { success: true, events, count: events.length };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to list calendar events' };
+          }
+          break;
+        }
+        case 'sendTelegramMessage': {
+          try {
+            const { sendTelegramMessage: tgSend } = await import('@/lib/integrations/telegram');
+
+            let chatId = args.chatId;
+            if (!chatId) {
+              // Look up linked Telegram user for this agent
+              const rows = await sql<any[]>`
+                SELECT telegram_user_id FROM telegram_users
+                WHERE agent_id = ${agentId}
+                LIMIT 1
+              `;
+              if (rows.length === 0) {
+                result = { success: false, error: 'No Telegram user linked to this agent. User must /start the bot first.' };
+                break;
+              }
+              chatId = rows[0].telegram_user_id;
+            }
+
+            const tgResult = await tgSend({ chatId, text: args.text, parseMode: args.parseMode });
+
+            // Log activity
+            await logActivityStep(agentId, 'telegram_message_sent', {
+              chatId,
+              text: args.text,
+              messageId: tgResult.messageId,
+            });
+
+            result = { success: true, ...tgResult };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to send Telegram message' };
+          }
           break;
         }
       }
