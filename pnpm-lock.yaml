@@ -11,6 +11,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^3.0.29
         version: 3.0.29(zod@4.1.12)
+      '@electric-sql/pglite':
+        specifier: ^0.2.17
+        version: 0.2.17
       '@hookform/resolvers':
         specifier: ^3.10.0
         version: 3.10.0(react-hook-form@7.65.0(react@19.2.0))
@@ -546,6 +549,9 @@ packages:
 
   '@date-fns/tz@1.2.0':
     resolution: {integrity: sha512-LBrd7MiJZ9McsOgxqWX7AaxrDjcFVjWH/tIKJd7pnR7McaslGYOP1QmmiBXdJH/H/yLCT+rcQ7FaPBUxRGUtrg==}
+
+  '@electric-sql/pglite@0.2.17':
+    resolution: {integrity: sha512-qEpKRT2oUaWDH6tjRxLHjdzMqRUGYDnGZlKrnL4dJ77JVMcP2Hpo3NYnOSPKdZdeec57B6QPprCUFg0picx5Pw==}
 
   '@emnapi/core@1.6.0':
     resolution: {integrity: sha512-zq/ay+9fNIJJtJiZxdTnXS20PllcYMX3OE23ESc4HK/bdYu3cOWYVhsOhVnXALfU/uqJIxn5NBPd9z4v+SfoSg==}
@@ -7775,6 +7781,8 @@ snapshots:
   '@chevrotain/utils@11.0.3': {}
 
   '@date-fns/tz@1.2.0': {}
+
+  '@electric-sql/pglite@0.2.17': {}
 
   '@emnapi/core@1.6.0':
     dependencies:

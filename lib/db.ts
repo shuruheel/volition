@@ -1,63 +1,73 @@
-import { neon, neonConfig } from '@neondatabase/serverless';
-import { Pool } from '@neondatabase/serverless';
+/**
+ * Database client — dual-mode: Neon (remote) or PGlite (local embedded Postgres).
+ *
+ * If DATABASE_URL is set → Neon (production / remote database)
+ * If DATABASE_URL is NOT set → PGlite (zero-config local development)
+ */
 
-// Connection string from environment
+import { neon, neonConfig, Pool } from '@neondatabase/serverless';
+import { createLocalSql, getLocalPool } from './db-local';
+
 const DATABASE_URL = process.env.DATABASE_URL;
 const DATABASE_URL_POOLED = process.env.DATABASE_URL_POOLED || DATABASE_URL;
 
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is not set');
-}
+let _sql: any;
+let _getPool: () => Promise<any>;
 
-/**
- * Lazy WebSocket initialization for Pool (only when needed)
- * This avoids bundling Node.js modules into workflow functions
- */
-let wsInitialized = false;
-async function ensureWebSocket() {
-  if (typeof WebSocket === 'undefined' && !wsInitialized) {
-    wsInitialized = true;
-    try {
-      const ws = await import('ws');
-      neonConfig.webSocketConstructor = ws.default;
-    } catch (e) {
-      // ws not available, Pool will use HTTP fallback
-      console.warn('WebSocket not available, Pool will use HTTP');
+if (DATABASE_URL) {
+  // ── Neon mode ────────────────────────────────────────────────────────
+  _sql = neon(DATABASE_URL);
+
+  let wsInitialized = false;
+  let _pool: Pool | null = null;
+
+  _getPool = async () => {
+    if (!_pool) {
+      if (typeof WebSocket === 'undefined' && !wsInitialized) {
+        wsInitialized = true;
+        try {
+          const ws = await import('ws');
+          neonConfig.webSocketConstructor = (ws as any).default || ws;
+        } catch {
+          console.warn('WebSocket not available, Pool will use HTTP');
+        }
+      }
+      _pool = new Pool({
+        connectionString: DATABASE_URL_POOLED,
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+      });
     }
-  }
+    return _pool;
+  };
+} else {
+  // ── PGlite local mode ───────────────────────────────────────────────
+  _sql = createLocalSql();
+  _getPool = getLocalPool;
+  console.log('[db] Using PGlite (local embedded Postgres)');
 }
 
 /**
- * Neon SQL client for simple queries (HTTP)
- * Use this for most operations - it's fast and works in edge environments
- * This uses HTTP by default and doesn't need WebSocket
+ * Neon / PGlite SQL client for simple queries (HTTP / embedded)
+ * Use this for most operations.
  */
-export const sql = neon(DATABASE_URL);
+export const sql = _sql;
 
 /**
- * Neon Pool client for transactions and connection pooling
- * Use this when you need transactions or multiple concurrent queries
- * Pool is created lazily to avoid bundling ws module
+ * Pool client for transactions and connection pooling.
+ * In workflow steps, always use getPool() not the direct pool export.
  */
-let _pool: Pool | null = null;
-export async function getPool(): Promise<Pool> {
-  if (!_pool) {
-    await ensureWebSocket(); // Only initialize ws when Pool is actually used
-    _pool = new Pool({
-      connectionString: DATABASE_URL_POOLED,
-      max: 20, // Maximum pool size
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
-  }
-  return _pool;
+export async function getPool(): Promise<any> {
+  return _getPool();
 }
 
-// For backward compatibility, export pool as a getter that throws if used in workflow
-// In workflow functions, Pool should be obtained via getPool() inside step functions
-export const pool = new Proxy({} as Pool, {
+// For backward compatibility, export pool as a getter that throws if used directly
+export const pool = new Proxy({} as any, {
   get: () => {
-    throw new Error('Direct pool access not allowed. Use getPool() inside step functions instead.');
+    throw new Error(
+      'Direct pool access not allowed. Use getPool() inside step functions instead.',
+    );
   },
 });
 
@@ -124,7 +134,15 @@ export interface Call {
   id: string;
   agent_id: string;
   to_number: string;
-  status: 'queued' | 'ringing' | 'in-progress' | 'completed' | 'failed' | 'busy' | 'no-answer' | 'canceled';
+  status:
+    | 'queued'
+    | 'ringing'
+    | 'in-progress'
+    | 'completed'
+    | 'failed'
+    | 'busy'
+    | 'no-answer'
+    | 'canceled';
   twilio_sid: string | null;
   started_at: Date | null;
   ended_at: Date | null;
@@ -135,7 +153,15 @@ export interface Call {
 export interface ToolConfig {
   id: string;
   user_id: string;
-  tool: 'openai' | 'neon' | 'firecrawl' | 'supermemory' | 'browser_use' | 'twilio' | 'google_oauth' | 'telegram';
+  tool:
+    | 'openai'
+    | 'neon'
+    | 'firecrawl'
+    | 'supermemory'
+    | 'browser_use'
+    | 'twilio'
+    | 'google_oauth'
+    | 'telegram';
   data_encrypted: string;
   created_at: Date;
   updated_at: Date;
@@ -150,20 +176,11 @@ export interface TelegramUser {
 }
 
 /**
- * Helper to execute migrations
+ * Helper to execute migrations (uses new auto-migration runner)
  */
 export async function runMigrations() {
-  try {
-    const migrationPath = process.cwd() + '/db/migrations/001_init.sql';
-    const fs = require('fs');
-    const migrationSQL = fs.readFileSync(migrationPath, 'utf-8');
-    
-    await sql(migrationSQL);
-    console.log('✅ Migrations completed successfully');
-  } catch (error) {
-    console.error('❌ Migration failed:', error);
-    throw error;
-  }
+  const { ensureMigrations } = await import('./db-migrate');
+  await ensureMigrations(sql);
 }
 
 /**
@@ -178,4 +195,3 @@ export async function checkDatabaseConnection(): Promise<boolean> {
     return false;
   }
 }
-

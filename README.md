@@ -52,7 +52,7 @@ Next.js 16 App Router
 │   ├── Telegram              — Bot messaging via grammY
 │   ├── Browser-Use Cloud     — Browser automation
 │   └── Twilio                — Voice calls
-└── Neon Postgres             — Serverless database
+└── Database                   — PGlite (local dev) or Neon Postgres (production)
 ```
 
 ## Quick Start
@@ -61,38 +61,26 @@ Next.js 16 App Router
 
 - Node.js 20+
 - pnpm
-- [Neon Postgres](https://neon.tech) account (free tier works)
 - [OpenAI](https://platform.openai.com) API key
 
-### 1. Clone and install
+### 1. Clone, configure, and run
 
 ```bash
 git clone https://github.com/shuruheel/volition.git
 cd volition
-pnpm install
-```
-
-### 2. Configure environment
-
-```bash
 cp env.example .env.local
-```
-
-Edit `.env.local` with your credentials. Only `OPENAI_API_KEY`, `DATABASE_URL`, `DATABASE_URL_POOLED`, and `APP_ENCRYPTION_KEY` are required. All integrations are optional.
-
-### 3. Set up database
-
-```bash
-pnpm db:setup
-```
-
-### 4. Start dev server
-
-```bash
+# Edit .env.local — set OPENAI_API_KEY (only required variable)
+pnpm install
 pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+That's it. The database (PGlite embedded Postgres) and encryption key auto-configure for local development. No external services needed.
+
+### Using Neon Postgres (optional)
+
+For production or shared databases, set `DATABASE_URL` and `DATABASE_URL_POOLED` in `.env.local`, then run `pnpm db:setup` to apply migrations and seed demo data.
 
 ### 5. Try it out
 

@@ -10,11 +10,12 @@ Volition — open-source AI agent orchestration platform built with Next.js 16, 
 
 ```bash
 pnpm install          # Install dependencies
-pnpm dev              # Dev server at http://localhost:3000
+pnpm dev              # Dev server at http://localhost:3000 (PGlite auto-configures if no DATABASE_URL)
 pnpm build            # Production build (must succeed before review)
 pnpm lint             # ESLint
-pnpm db:setup         # Run migrations + seed demo data
+pnpm db:setup         # Run migrations + seed demo data (Neon or PGlite)
 pnpm db:migrate       # Run migrations only
+pnpm db:reset         # Delete local PGlite database (.volition/data/)
 ```
 
 No test framework is configured yet. Verify changes manually via `pnpm dev` and `pnpm build`.
@@ -25,7 +26,7 @@ No test framework is configured yet. Verify changes manually via `pnpm dev` and 
 - **Runtime**: Next.js 16 (App Router, RSC), React 19.2.0
 - **Agent Execution**: Vercel Workflow (`'use workflow'` / `'use step'` directives) for durable, resumable agent execution
 - **AI**: OpenAI GPT-5.2 via raw OpenAI SDK inside workflow steps (not AI SDK `tool()` helper)
-- **Database**: Neon Postgres serverless via `@neondatabase/serverless` HTTP driver
+- **Database**: Dual-mode — PGlite (embedded Postgres, zero-config local dev) or Neon Postgres (remote, set `DATABASE_URL`)
 - **Styling**: Tailwind CSS 4, shadcn/ui (New York style, RSC-enabled)
 
 ### Agent Execution: Vercel Workflow
@@ -46,9 +47,15 @@ The execution engine is in `lib/ai/workflows/`:
 
 ### Database
 
-`lib/db.ts` exports:
-- `sql` — Neon HTTP client (tagged template) for most queries. Use this by default.
+`lib/db.ts` exports a dual-mode database client:
+- If `DATABASE_URL` is set → Neon Postgres (production/remote)
+- If `DATABASE_URL` is NOT set → PGlite embedded Postgres (zero-config local dev, data in `.volition/data/`)
+
+Exports:
+- `sql` — Tagged template client for most queries. Use this by default.
 - `getPool()` — Lazy Pool client for transactions. In workflow steps, always use `getPool()` not the direct `pool` export (which throws).
+
+Migrations (`db/migrations/` 001-008) are tracked in a `schema_migrations` table and auto-run in PGlite mode. For Neon, run `pnpm db:setup`.
 
 Key tables: `agents`, `activities`, `memories`, `calls`, `tool_configs`, `agent_status`, `users`, `telegram_users`
 
@@ -102,8 +109,10 @@ lib/
 │   ├── supermemory.ts     # Supermemory storage + search
 │   ├── google.ts          # Gmail + Google Calendar (OAuth2)
 │   └── telegram.ts        # Telegram bot (grammY)
-├── db.ts                  # Neon client, TypeScript types for all tables
-├── crypto.ts              # AES-GCM encryption for tool_configs
+├── db.ts                  # Dual-mode DB client (Neon or PGlite), TypeScript types
+├── db-local.ts            # PGlite tagged template wrapper (local dev)
+├── db-migrate.ts          # Auto-migration runner (schema_migrations tracking)
+├── crypto.ts              # AES-GCM encryption for tool_configs (auto dev key)
 ├── agent-status.ts        # Agent execution status tracking
 └── utils.ts               # cn() and shared utilities
 
@@ -115,11 +124,16 @@ db/migrations/             # SQL migrations (001-008)
 Required (see `env.example`):
 
 ```bash
-OPENAI_API_KEY=sk-...
-DATABASE_URL=postgresql://...
-DATABASE_URL_POOLED=postgresql://...?pgbouncer=true
-APP_ENCRYPTION_KEY=...             # 32-byte hex: openssl rand -hex 32
+OPENAI_API_KEY=sk-...              # Only truly required variable
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+Auto-configured (optional — omit for zero-config local dev):
+
+```bash
+DATABASE_URL=postgresql://...                       # Omit → PGlite embedded Postgres
+DATABASE_URL_POOLED=postgresql://...?pgbouncer=true  # Omit → PGlite
+APP_ENCRYPTION_KEY=...                               # Omit in dev → auto-generated dev key
 ```
 
 Optional integrations:

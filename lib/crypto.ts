@@ -7,15 +7,21 @@ const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 
 /**
- * Get encryption key from environment
- * In production, use a secure key management service
+ * Get encryption key from environment.
+ * In dev mode, auto-generates a deterministic key if APP_ENCRYPTION_KEY is not set.
  */
+const DEV_KEY = 'volition-dev-key-do-not-use-in-production-0000';
+
 function getEncryptionKey(): Buffer {
-  const secret = process.env.APP_ENCRYPTION_KEY;
+  let secret = process.env.APP_ENCRYPTION_KEY;
   if (!secret) {
-    throw new Error('APP_ENCRYPTION_KEY environment variable is required');
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('APP_ENCRYPTION_KEY environment variable is required in production');
+    }
+    console.warn('[crypto] APP_ENCRYPTION_KEY not set — using auto-generated dev key. Do NOT use in production.');
+    secret = DEV_KEY;
   }
-  
+
   // Derive a key from the secret
   const salt = Buffer.from('volition-salt'); // Fixed salt for deterministic key
   return scryptSync(secret, salt, KEY_LENGTH);

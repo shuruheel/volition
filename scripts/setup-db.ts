@@ -1,36 +1,18 @@
 #!/usr/bin/env tsx
 /**
  * Database setup script
- * Runs migrations and seeds minimal demo data
- * 
+ * Runs all pending migrations and seeds minimal demo data
+ *
  * Usage:
  *   pnpm tsx scripts/setup-db.ts
  */
 
 import { sql } from '../lib/db';
-import * as fs from 'fs';
-import * as path from 'path';
-
-async function runMigrations() {
-  console.log('📦 Running database migrations...');
-  
-  try {
-    const migrationPath = path.join(process.cwd(), 'db', 'migrations', '001_init.sql');
-    const migrationSQL = fs.readFileSync(migrationPath, 'utf-8');
-    
-    // Execute migration
-    await sql(migrationSQL);
-    
-    console.log('✅ Migrations completed successfully');
-  } catch (error) {
-    console.error('❌ Migration failed:', error);
-    throw error;
-  }
-}
+import { ensureMigrations } from '../lib/db-migrate';
 
 async function seedDemoData() {
   console.log('🌱 Seeding demo data...');
-  
+
   try {
     // Create demo user
     const userResult = await sql`
@@ -41,7 +23,7 @@ async function seedDemoData() {
     `;
     const userId = userResult[0].id;
     console.log('  ✓ Created demo user:', userId);
-    
+
     // Create demo agent
     const agentResult = await sql`
       INSERT INTO agents (name, prompt, tools, status)
@@ -54,11 +36,11 @@ async function seedDemoData() {
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
-    
+
     if (agentResult.length > 0) {
       const agentId = agentResult[0].id;
       console.log('  ✓ Created demo agent:', agentId);
-      
+
       // Create demo activity
       await sql`
         INSERT INTO activities (agent_id, type, status, priority, payload)
@@ -75,7 +57,7 @@ async function seedDemoData() {
         )
       `;
       console.log('  ✓ Created demo activity');
-      
+
       // Create demo memory
       await sql`
         INSERT INTO memories (agent_id, provider_id, kind, metadata)
@@ -93,7 +75,7 @@ async function seedDemoData() {
     } else {
       console.log('  ℹ Demo agent already exists');
     }
-    
+
     console.log('✅ Demo data seeded successfully');
   } catch (error) {
     console.error('❌ Seeding failed:', error);
@@ -103,7 +85,7 @@ async function seedDemoData() {
 
 async function checkHealth() {
   console.log('🏥 Checking database health...');
-  
+
   try {
     const result = await sql`SELECT 1 as health`;
     if (result.length > 0) {
@@ -119,24 +101,25 @@ async function checkHealth() {
 
 async function main() {
   console.log('🚀 Starting database setup...\n');
-  
+
   // Check health first
   const isHealthy = await checkHealth();
   if (!isHealthy) {
-    console.error('\n❌ Database is not accessible. Please check your DATABASE_URL.');
+    console.error('\n❌ Database is not accessible. Check your DATABASE_URL (or omit it for local PGlite).');
     process.exit(1);
   }
-  
+
   console.log('');
-  
-  // Run migrations
-  await runMigrations();
-  
+
+  // Run all pending migrations
+  console.log('📦 Running database migrations...');
+  await ensureMigrations(sql);
+
   console.log('');
-  
+
   // Seed demo data
   await seedDemoData();
-  
+
   console.log('\n🎉 Database setup complete!');
   console.log('\nNext steps:');
   console.log('  1. Start the dev server: pnpm dev');
@@ -150,4 +133,3 @@ main()
     console.error('\n💥 Setup failed:', error);
     process.exit(1);
   });
-

@@ -8,12 +8,6 @@ import type { Agent } from '@/lib/db';
  */
 export async function GET() {
   try {
-    // Check if database is configured
-    if (!process.env.DATABASE_URL) {
-      console.warn('DATABASE_URL not configured, returning empty array');
-      return NextResponse.json([]);
-    }
-
     const agents = await sql<Agent[]>`
       SELECT * FROM agents
       ORDER BY created_at DESC

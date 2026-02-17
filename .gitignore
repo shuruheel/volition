@@ -43,3 +43,6 @@ next-env.d.ts
 
 # coverage
 coverage/
+
+# PGlite local database
+.volition/
