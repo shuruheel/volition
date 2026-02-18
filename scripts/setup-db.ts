@@ -9,7 +9,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { config } from 'dotenv';
 import { neon } from '@neondatabase/serverless';
+
+// Load .env.local (tsx doesn't auto-load it like Next.js does)
+config({ path: path.join(process.cwd(), '.env.local') });
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -57,8 +61,17 @@ async function runMigrations() {
     const filePath = path.join(migrationDir, file);
     const sqlContent = fs.readFileSync(filePath, 'utf-8');
 
-    // Execute raw SQL (neon http driver accepts raw strings)
-    await sql(sqlContent);
+    // Split migration into individual statements (Neon HTTP driver doesn't support multi-statement)
+    // Strip SQL comments first, then split on semicolons
+    const stripped = sqlContent.replace(/--.*$/gm, '');
+    const statements = stripped
+      .split(/;\s*$/m)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    for (const stmt of statements) {
+      await sql.query(stmt);
+    }
     await sql`
       INSERT INTO schema_migrations (version) VALUES (${version})
     `;
