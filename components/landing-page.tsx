@@ -16,11 +16,13 @@ import {
   ArrowRight,
   CheckCircle2,
   Sparkles,
-  ChevronRight,
   Clock,
   GitBranch,
   Lock,
   Database,
+  FileText,
+  AlertCircle,
+  XCircle,
 } from "lucide-react"
 
 function GradientOrb({ className }: { className?: string }) {
@@ -109,6 +111,175 @@ function WorkflowStep({
   )
 }
 
+/** Mock activity card for the landing page demo */
+function MockActivityCard({
+  type,
+  visible,
+}: {
+  type: "email" | "research" | "calendar" | "question"
+  visible: boolean
+}) {
+  const configs = {
+    email: {
+      icon: Mail,
+      iconColor: "text-green-400",
+      iconBg: "bg-green-500/10",
+      label: "Email Draft",
+      statusLabel: "Pending Approval",
+      statusColor: "text-amber-400",
+      statusBg: "bg-amber-500/10",
+      StatusIcon: Clock,
+      agent: "Research Assistant",
+      time: "2 min ago",
+      content: (
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white/40">To:</span>
+            <span className="text-sm text-white/70">team@company.com</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white/40">Subject:</span>
+            <span className="text-sm text-white/80 font-medium">Q4 Market Analysis Findings</span>
+          </div>
+          <p className="text-sm text-white/40 leading-relaxed">
+            Hi team, attached are the key findings from my competitive analysis. Three emerging trends worth discussing...
+          </p>
+        </div>
+      ),
+      actions: true,
+    },
+    research: {
+      icon: FileText,
+      iconColor: "text-blue-400",
+      iconBg: "bg-blue-500/10",
+      label: "Research",
+      statusLabel: "Completed",
+      statusColor: "text-blue-400",
+      statusBg: "bg-blue-500/10",
+      StatusIcon: CheckCircle2,
+      agent: "Research Assistant",
+      time: "5 min ago",
+      content: (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-white/80">Competitive Landscape Analysis</p>
+          <p className="text-sm text-white/40 leading-relaxed">
+            Scraped 8 sources across 3 queries. Stored findings in knowledge.md and synced to semantic memory.
+          </p>
+          <div className="flex gap-1.5 mt-1">
+            <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400">Firecrawl</span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400">3 queries</span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">8 sources</span>
+          </div>
+        </div>
+      ),
+      actions: false,
+    },
+    calendar: {
+      icon: Calendar,
+      iconColor: "text-orange-400",
+      iconBg: "bg-orange-500/10",
+      label: "Calendar Event",
+      statusLabel: "Pending Approval",
+      statusColor: "text-amber-400",
+      statusBg: "bg-amber-500/10",
+      StatusIcon: Clock,
+      agent: "Email Manager",
+      time: "just now",
+      content: (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-white/80">Strategy Review Meeting</p>
+          <p className="text-sm text-white/50">Tomorrow, 2:00 PM - 3:00 PM</p>
+          <p className="text-sm text-white/40">
+            Follow-up on competitive analysis findings with product and marketing leads.
+          </p>
+        </div>
+      ),
+      actions: true,
+    },
+    question: {
+      icon: MessageSquare,
+      iconColor: "text-violet-400",
+      iconBg: "bg-violet-500/10",
+      label: "Question",
+      statusLabel: "Awaiting Response",
+      statusColor: "text-amber-400",
+      statusBg: "bg-amber-500/10",
+      StatusIcon: Clock,
+      agent: "Research Assistant",
+      time: "1 min ago",
+      content: (
+        <div className="space-y-3">
+          <p className="text-sm text-white/70 leading-relaxed">
+            I found 3 interesting angles for the competitive analysis. Which should I prioritize?
+          </p>
+          <div className="space-y-1.5 pl-0.5">
+            <p className="text-sm text-white/50">1. Pricing strategy comparison</p>
+            <p className="text-sm text-white/50">2. Feature gap analysis</p>
+            <p className="text-sm text-white/50">3. Market positioning shifts</p>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <div className="flex-1 h-8 rounded-lg border border-white/[0.1] bg-white/[0.03] flex items-center px-3">
+              <span className="text-xs text-white/30">Type your answer...</span>
+            </div>
+            <div className="h-8 px-3 rounded-lg bg-white/[0.08] flex items-center">
+              <span className="text-xs text-white/40">Send</span>
+            </div>
+          </div>
+        </div>
+      ),
+      actions: false,
+    },
+  }
+
+  const c = configs[type]
+  const Icon = c.icon
+  const StatusIcon = c.StatusIcon
+
+  return (
+    <div
+      className={`rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden transition-all duration-700 ${
+        visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+      }`}
+    >
+      {/* Header */}
+      <div className="px-4 py-3 flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className={`p-2 rounded-lg ${c.iconBg}`}>
+            <Icon className={`h-4 w-4 ${c.iconColor}`} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-sm font-semibold text-white">{c.label}</span>
+              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${c.statusBg} ${c.statusColor}`}>
+                <StatusIcon className="h-3 w-3" />
+                {c.statusLabel}
+              </span>
+            </div>
+            <p className="text-xs text-white/30">{c.agent} &middot; {c.time}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="px-4 pb-3">{c.content}</div>
+
+      {/* HITL Actions */}
+      {c.actions && (
+        <div className="px-4 pb-3 pt-2 border-t border-white/[0.06] flex gap-2">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 text-xs font-medium cursor-default">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Approve
+          </div>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] text-white/40 text-xs font-medium cursor-default">
+            <XCircle className="h-3.5 w-3.5" />
+            Reject
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function LandingPage() {
   const [activeStep, setActiveStep] = useState(0)
   const [mounted, setMounted] = useState(false)
@@ -124,6 +295,12 @@ export function LandingPage() {
     }, 3000)
     return () => clearInterval(interval)
   }, [])
+
+  // Which cards to show based on active step
+  const showResearch = activeStep >= 1
+  const showEmail = activeStep >= 2
+  const showQuestion = activeStep >= 3
+  const showCalendar = activeStep >= 4
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white overflow-hidden">
@@ -160,17 +337,11 @@ export function LandingPage() {
             >
               GitHub
             </a>
-            <Link
-              href="/dashboard"
-              className="text-sm text-white/50 hover:text-white transition-colors px-3 py-1.5"
-            >
-              Dashboard
-            </Link>
             <button
               onClick={() => signIn("google", { callbackUrl: "/" })}
               className="text-sm font-medium bg-white text-black px-4 py-2 rounded-lg hover:bg-white/90 transition-colors"
             >
-              Sign in
+              Start
             </button>
           </div>
         </div>
@@ -194,11 +365,10 @@ export function LandingPage() {
                 mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
               }`}
             >
-              AI agents that{" "}
+              AI agents{" "}
               <span className="bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-transparent">
-                actually work
-              </span>{" "}
-              for you
+                you can trust
+              </span>
             </h1>
 
             <p
@@ -206,13 +376,13 @@ export function LandingPage() {
                 mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
               }`}
             >
-              Persistent agents that research, email, schedule, and take action on your behalf.
-              With human-in-the-loop approval for every sensitive action, durable execution
-              that survives failures, and memory that persists across sessions.
+              Agents that research, email, and schedule on your behalf — surfacing every action
+              in a live activity feed with typed cards you can approve, reject, or answer
+              before anything goes out.
             </p>
 
             <div
-              className={`flex flex-wrap gap-4 transition-all duration-700 delay-300 ${
+              className={`flex flex-wrap gap-4 mb-12 transition-all duration-700 delay-300 ${
                 mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
               }`}
             >
@@ -233,118 +403,96 @@ export function LandingPage() {
                 View source
               </a>
             </div>
+
+            {/* Hero feature pills */}
+            <div
+              className={`flex flex-wrap gap-3 transition-all duration-700 delay-[400ms] ${
+                mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+              }`}
+            >
+              <div className="flex items-center gap-2 text-sm text-white/40">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400/60" />
+                Live activity feed
+              </div>
+              <div className="flex items-center gap-2 text-sm text-white/40">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400/60" />
+                Human-in-the-loop approval
+              </div>
+              <div className="flex items-center gap-2 text-sm text-white/40">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400/60" />
+                Typed activity cards
+              </div>
+              <div className="flex items-center gap-2 text-sm text-white/40">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400/60" />
+                Persistent memory
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Live workflow visualization */}
+      {/* See it in action — activity feed + HITL */}
       <section className="relative z-10 pb-24">
         <div className="max-w-6xl mx-auto px-6">
           <div className="grid lg:grid-cols-2 gap-12 items-start">
             <div>
               <h2 className="text-2xl font-semibold mb-3">See it in action</h2>
               <p className="text-white/40 text-sm mb-8">
-                Watch how a Volition agent researches, takes action, and checks in with you
-                before doing anything sensitive.
+                Every agent action flows through your activity feed as a typed card.
+                Sensitive actions pause for your approval — nothing goes out without your OK.
               </p>
               <div className="space-y-2">
                 <WorkflowStep
                   number={1}
                   title="Enable your agent"
-                  description="Agent introduces itself and asks what you need"
+                  description="Introduces itself and asks what you need"
                   active={activeStep === 0}
                 />
                 <WorkflowStep
                   number={2}
-                  title="Agent plans research"
-                  description="Decomposes your request into focused search queries"
+                  title="Research appears in your feed"
+                  description="Typed cards show what was scraped, stored, and learned"
                   active={activeStep === 1}
                 />
                 <WorkflowStep
                   number={3}
-                  title="Gathers and stores knowledge"
-                  description="Scrapes the web, stores findings in semantic memory"
+                  title="Email draft needs your approval"
+                  description="Agent pauses — you approve, edit, or reject before it sends"
                   active={activeStep === 2}
                 />
                 <WorkflowStep
                   number={4}
-                  title="Requests approval"
-                  description="Drafts an email and waits for your review before sending"
+                  title="Agent asks a question"
+                  description="Chat drawer opens, you answer inline, agent continues"
                   active={activeStep === 3}
                 />
                 <WorkflowStep
                   number={5}
-                  title="Checks in on schedule"
-                  description="Heartbeat runs every 30 min, only acts when needed"
+                  title="Calendar event proposed"
+                  description="Review the details, then approve or reject"
                   active={activeStep === 4}
                 />
               </div>
             </div>
 
-            {/* Terminal-style code/status display */}
+            {/* Live activity feed preview */}
             <div className="relative">
               <div className="rounded-2xl border border-white/[0.08] bg-[#0d0d14] overflow-hidden shadow-2xl shadow-black/40">
-                {/* Title bar */}
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06] bg-white/[0.02]">
-                  <div className="w-3 h-3 rounded-full bg-red-500/60" />
-                  <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
-                  <div className="w-3 h-3 rounded-full bg-green-500/60" />
-                  <span className="text-xs text-white/30 ml-2 font-mono">agent-workflow.ts</span>
+                {/* Feed header */}
+                <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] bg-white/[0.02]">
+                  <span className="text-sm font-medium text-white/70">Activity Feed</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-xs text-white/30">Live</span>
+                  </div>
                 </div>
 
-                {/* Code content */}
-                <div className="p-5 font-mono text-sm leading-relaxed">
-                  <div className="text-white/30">{"// Durable agent execution"}</div>
-                  <div className="mt-1">
-                    <span className="text-violet-400">{"'use workflow'"}</span>
-                  </div>
-                  <div className="mt-3 text-white/30">{"// Each step auto-retries on failure"}</div>
-                  <div className="mt-1">
-                    <span className="text-violet-400">{"'use step'"}</span>
-                  </div>
-                  <div className="mt-3">
-                    <span className="text-indigo-400">const</span>{" "}
-                    <span className="text-white/80">research</span>{" "}
-                    <span className="text-white/40">=</span>{" "}
-                    <span className="text-indigo-400">await</span>{" "}
-                    <span className="text-fuchsia-400">firecrawlResearch</span>
-                    <span className="text-white/40">{"("}</span>
-                    <span className="text-green-400">{"'market analysis'"}</span>
-                    <span className="text-white/40">{")"}</span>
-                  </div>
-                  <div className="mt-3">
-                    <span className="text-indigo-400">await</span>{" "}
-                    <span className="text-fuchsia-400">updateMemory</span>
-                    <span className="text-white/40">{"("}</span>
-                    <span className="text-green-400">{"'knowledge.md'"}</span>
-                    <span className="text-white/40">{", "}</span>
-                    <span className="text-white/60">findings</span>
-                    <span className="text-white/40">{")"}</span>
-                  </div>
-                  <div className="mt-3 text-white/30">{"// Pauses for human approval"}</div>
-                  <div className="mt-1">
-                    <span className="text-indigo-400">const</span>{" "}
-                    <span className="text-white/80">approval</span>{" "}
-                    <span className="text-white/40">=</span>{" "}
-                    <span className="text-indigo-400">await</span>{" "}
-                    <span className="text-fuchsia-400">sendEmail</span>
-                    <span className="text-white/40">{"({"}</span>
-                  </div>
-                  <div className="ml-4">
-                    <span className="text-white/60">to</span>
-                    <span className="text-white/40">{": "}</span>
-                    <span className="text-green-400">{"'team@company.com'"}</span>
-                    <span className="text-white/40">{","}</span>
-                  </div>
-                  <div className="ml-4">
-                    <span className="text-white/60">subject</span>
-                    <span className="text-white/40">{": "}</span>
-                    <span className="text-green-400">{"'Research findings'"}</span>
-                  </div>
-                  <div>
-                    <span className="text-white/40">{"}) "}</span>
-                    <span className="text-white/30">{"// ← waits for your OK"}</span>
-                  </div>
+                {/* Stacked activity cards */}
+                <div className="p-3 space-y-2.5 max-h-[480px] overflow-hidden">
+                  <MockActivityCard type="research" visible={showResearch} />
+                  <MockActivityCard type="email" visible={showEmail} />
+                  <MockActivityCard type="question" visible={showQuestion} />
+                  <MockActivityCard type="calendar" visible={showCalendar} />
                 </div>
               </div>
             </div>
@@ -373,7 +521,7 @@ export function LandingPage() {
             <FeatureCard
               icon={Shield}
               title="Human-in-the-Loop"
-              description="Agents pause and ask before sending emails, creating calendar events, or making phone calls. You stay in control."
+              description="Typed activity cards for every action. Emails, calendar events, and calls all pause for your approval. You stay in control."
               gradient="bg-gradient-to-br from-emerald-500/80 to-green-600/80"
             />
             <FeatureCard
