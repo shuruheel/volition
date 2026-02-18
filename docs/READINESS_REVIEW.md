@@ -243,8 +243,8 @@ All integration points now resolve per-user keys from `tool_configs`. See the Pe
 
 | Issue | Impact | Workaround |
 |-------|--------|-----------|
-| No embedding-based memory retrieval | Large knowledge.md files loaded in full or not at all | Acceptable for now (OpenClaw also does full-file load) |
-| No memory file compaction | journal.md and knowledge.md grow indefinitely | Manual editing in Google Drive |
+| ~~No embedding-based memory retrieval~~ | **Resolved (v4)**: `searchMemory` tool does semantic search via Supermemory | Agents can find relevant content without loading entire files |
+| No memory file compaction | journal.md and knowledge.md grow indefinitely | Manual editing in Google Drive; agents can use `appendMemory` for incremental writes |
 | Twilio WebSocket stream is a stub | Voice call streaming not functional | Outbound calls work, just no real-time audio streaming |
 | Total Spend metric is mocked at $0 | No cost tracking | Track via provider dashboards |
 | No global navigation component | Users must know page URLs or use dashboard links | Dashboard has links to Templates, Skills; each page has back-to-dashboard button |
@@ -253,6 +253,28 @@ All integration points now resolve per-user keys from `tool_configs`. See the Pe
 | 10-step chat workflow limit | Complex tasks requested via chat may hit the step limit | User can re-message to continue, or heartbeat picks up |
 
 ### Fixes Applied
+
+#### v4 (Auth Fixes & Dynamic Memory)
+
+**Security auth fixes (3 remaining gaps closed):**
+- **`POST /api/activities` auth**: Added `requireAgentOwnership(agent_id)` before activity creation. Returns 401/404 for unauthorized access.
+- **`/api/agents/:id/memory` ownership**: Replaced `requireUserId()` with `requireAgentOwnership(id)` in both GET and PUT handlers. Returns 401/404 for unauthorized access.
+- **Telegram webhook validation**: `/start <agentId>` deep-link now validates agent exists, is `enabled`, and has `telegram` in its tools array. Rejects with descriptive messages.
+
+**Dynamic memory files:**
+- **Relaxed filename constraints**: `writeMemoryFile()` and `readMemoryFile()` accept `string` instead of `MemoryFileName` enum. Agents can create any `.md` file.
+- **`appendMemoryFile()`**: New function in `google-drive.ts` that reads existing content, appends with `\n\n` separator, and writes back.
+- **Dynamic file listing**: `listMemoryFiles()` queries the Drive folder via `files.list()` API to discover all `.md` files dynamically.
+
+**Supermemory bug fix & memory search:**
+- **Fixed `searchMemories()` response mapping**: Changed `results.items` → `results.results`, `item.id` → `item.documentId`, added `includeFullDocs: true`. This bug meant Supermemory search was silently returning empty arrays.
+- **`storeMemoryInSupermemory()`**: Upserts memory file content using deterministic `customId: memory:{agentId}:{filename}`. Deletes existing doc first (upsert pattern).
+- **`searchAgentMemory()`**: Queries Supermemory filtered by `metadata.agentId` and `metadata.kind = 'memory'`.
+
+**New workflow tools:**
+- **`appendMemory`**: Append content to a memory file without replacing. Syncs to Supermemory after write.
+- **`searchMemory`**: Semantic search across all agent memory files via Supermemory.
+- **Updated `readMemory`/`updateMemory`**: Removed `enum` constraint on filename. `updateMemory` now syncs to Supermemory after Drive write.
 
 #### v3 (Per-User Keys & Memory Context)
 
@@ -395,7 +417,7 @@ Volition/
 | **Memory file auto-loading** | Personality + memory files loaded into context automatically at each turn | `soul.md` and `preferences.md` auto-loaded via `loadMemoryContextStep()` + `withMemoryContext()` | **Parity** — both auto-inject personality/preferences |
 | **User-owned storage** | Local filesystem | Google Drive (user's account) | **Parity** — both give users ownership |
 | **File structure** | soul.md, memories.md, etc. in agent directory | soul.md, preferences.md, knowledge.md, journal.md in Drive folder | **Parity** |
-| **Semantic retrieval** | No (file-based, full load) | No (file-based, full load) | **Parity** — neither uses embeddings |
+| **Semantic retrieval** | No (file-based, full load) | Yes — `searchMemory` tool + Supermemory sync on write | **Volition is better** — agents can semantically search across all memory files |
 | **Admin visibility** | Admin has filesystem access (local deployment) | Admin has NO access (user's own Drive) | **Volition is better** for multi-user |
 | **Cross-agent memory** | Shared filesystem possible | Per-agent Drive folders, no sharing | Acceptable difference |
 | **Per-user API key isolation** | N/A (single-user) | Per-user encrypted keys for LLM providers, Supermemory, Google OAuth | **Volition is better** — multi-tenant isolation |
@@ -406,16 +428,16 @@ Volition/
 
 2. ~~**Per-user Supermemory keys**~~ — **DONE (v3)**. `resolveSupermemoryKey(userId)` resolves per-user encrypted keys from `tool_configs`, with env var fallback. All call sites pass `userId`.
 
-3. **Fix remaining auth gaps** (priority: high):
-   - Add `requireAgentOwnership()` to `POST /api/activities`
-   - Add `requireAgentOwnership()` to `GET/PUT /api/agents/:id/memory`
-   - Add ownership validation to Telegram `/start <agentId>` deep-link
+3. ~~**Fix remaining auth gaps**~~ — **DONE (v4)**:
+   - Added `requireAgentOwnership()` to `POST /api/activities`
+   - Added `requireAgentOwnership()` to `GET/PUT /api/agents/:id/memory` (replaced `requireUserId()`)
+   - Added ownership validation to Telegram `/start <agentId>` deep-link (validates agent exists, is enabled, has telegram tool)
 
 4. ~~**Add per-user key resolution for remaining services**~~ — **DONE (v3)**. Added `resolveFirecrawlKey()`, `resolveBrowserUseKey()`, `resolveTelegramToken()`, `resolveTwilioConfig()`. Fixed `planResearchQueriesStep()` to use `resolveProviderConfig()` with the agent's model config instead of hardcoded `process.env.OPENAI_API_KEY`.
 
 5. **Add memory file size management** (priority: low): Implement a `compactMemory` step that summarizes journal.md when it exceeds a threshold (e.g., 10K characters). Prevents context window overflow when loading memory files.
 
-6. **Future: Embedding-based retrieval**: For knowledge.md (which can grow large), consider chunking and embedding for contextual retrieval. This is not urgent — OpenClaw also does full-file loading — but will become necessary as agents accumulate knowledge over weeks/months.
+6. ~~**Embedding-based retrieval**~~ — **DONE (v4)**. Memory files are synced to Supermemory on write (`storeMemoryInSupermemory()`). The `searchMemory` tool performs semantic search across all agent memory files via `searchAgentMemory()`. Agents no longer need to load entire files to find relevant content.
 
 ---
 
@@ -481,6 +503,14 @@ This section tracks whether each external service correctly resolves per-user ke
 ---
 
 ## Files Created/Modified
+
+### Modified files (v4 — auth fixes & dynamic memory):
+- `app/api/activities/route.ts` — Added `requireAgentOwnership(agent_id)` to POST handler
+- `app/api/agents/[id]/memory/route.ts` — Replaced `requireUserId()` with `requireAgentOwnership(id)` in GET and PUT
+- `app/api/telegram/webhook/route.ts` — Added agent validation (exists, enabled, has telegram tool) to `/start` command
+- `lib/integrations/supermemory.ts` — Fixed `results.items` → `results.results` bug, added `includeFullDocs`, added `storeMemoryInSupermemory()` and `searchAgentMemory()`
+- `lib/integrations/google-drive.ts` — Relaxed `MemoryFileName` → `string` on write/read, added `appendMemoryFile()`, updated `listMemoryFiles()` for dynamic discovery
+- `lib/ai/workflows/steps.ts` — Removed `enum` from readMemory/updateMemory, added `appendMemory` + `searchMemory` tools + handlers, `updateMemory` syncs to Supermemory
 
 ### New files (v3):
 - `lib/integrations/browser-use.ts` — `resolveBrowserUseKey(userId)` helper for per-user Browser-Use API key resolution

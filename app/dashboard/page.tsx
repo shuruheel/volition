@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { signOut } from "next-auth/react"
 import type { Agent } from "@/lib/db"
 import { CreateAgentDialog } from "@/components/create-agent-dialog"
 import { UnifiedActivityCard } from "@/components/unified-activity-card"
@@ -10,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { HeartbeatIndicator } from "@/components/heartbeat-indicator"
 import { AgentAnalytics } from "@/components/agent-analytics"
-import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone, LayoutTemplate, Sparkles } from "lucide-react"
+import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone, LayoutTemplate, Sparkles, Settings, LogOut } from "lucide-react"
 import Link from "next/link"
 import type { Activity } from "@/lib/db"
 
@@ -308,7 +309,21 @@ export default function DashboardPage() {
                   Skills
                 </Button>
               </Link>
+              <Link href="/settings">
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Button>
+              </Link>
               <CreateAgentDialog onCreateAgent={handleCreateAgent} />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1 text-muted-foreground hover:text-foreground"
+                onClick={() => signOut({ callbackUrl: '/login' })}
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         </div>
