@@ -1,43 +1,99 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Brain, Globe, Phone, Mail, Database, Key, CheckCircle2, XCircle, Loader2, Calendar, Send, Search, AlertCircle } from "lucide-react"
+import { Brain, Globe, Phone, Key, CheckCircle2, XCircle, Loader2, Calendar, Send, Search, AlertCircle, Database, ArrowLeft, ChevronDown } from "lucide-react"
+import Link from "next/link"
 
 interface ToolConfig {
   id: string
   tool: string
   configured: boolean
+  maskedData?: Record<string, string>
   createdAt?: string
   updatedAt?: string
 }
 
-const TOOL_DEFINITIONS = [
+interface ToolField {
+  name: string
+  label: string
+  type: string
+  placeholder: string
+}
+
+interface ModelOption {
+  id: string
+  name: string
+}
+
+interface ToolDefinition {
+  id: string
+  name: string
+  description: string
+  icon: typeof Brain
+  color: string
+  bgColor: string
+  fields: ToolField[]
+  oauth?: boolean
+  models?: ModelOption[]
+}
+
+const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'GPT-4o and other OpenAI models for text generation',
+    description: 'GPT-5.2, GPT-5, and GPT-5 Mini for text generation',
     icon: Brain,
     color: 'text-green-600',
     bgColor: 'bg-green-100 dark:bg-green-900/20',
     fields: [
       { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'sk-...' },
     ],
+    models: [
+      { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2' },
+      { id: 'gpt-5-mini-2025-08-07', name: 'GPT-5 Mini' },
+      { id: 'gpt-5-2025-08-07', name: 'GPT-5' },
+    ],
   },
   {
     id: 'anthropic',
     name: 'Anthropic',
-    description: 'Claude Sonnet, Opus, and Haiku models',
+    description: 'Claude Opus 4.6, Sonnet 4.6, and Haiku 4.5',
     icon: Brain,
     color: 'text-orange-600',
     bgColor: 'bg-orange-100 dark:bg-orange-900/20',
     fields: [
       { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'sk-ant-...' },
+    ],
+    models: [
+      { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+    ],
+  },
+  {
+    id: 'google_oauth',
+    name: 'Google (Gmail + Calendar)',
+    description: 'Send/search emails and manage calendar events via Google APIs',
+    icon: Calendar,
+    color: 'text-red-600',
+    bgColor: 'bg-red-100 dark:bg-red-900/20',
+    fields: [],
+    oauth: true,
+  },
+  {
+    id: 'firecrawl',
+    name: 'Firecrawl',
+    description: 'Web search and scraping for agent research',
+    icon: Search,
+    color: 'text-amber-600',
+    bgColor: 'bg-amber-100 dark:bg-amber-900/20',
+    fields: [
+      { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'fc-...' },
     ],
   },
   {
@@ -52,17 +108,6 @@ const TOOL_DEFINITIONS = [
     ],
   },
   {
-    id: 'firecrawl',
-    name: 'Firecrawl',
-    description: 'Web search and scraping for agent research',
-    icon: Search,
-    color: 'text-amber-600',
-    bgColor: 'bg-amber-100 dark:bg-amber-900/20',
-    fields: [
-      { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'fc-...' },
-    ],
-  },
-  {
     id: 'browser_use',
     name: 'Browser-Use Cloud',
     description: 'AI-powered browser automation and web scraping',
@@ -71,6 +116,17 @@ const TOOL_DEFINITIONS = [
     bgColor: 'bg-blue-100 dark:bg-blue-900/20',
     fields: [
       { name: 'apiKey', label: 'API Key', type: 'password', placeholder: 'bu_...' },
+    ],
+  },
+  {
+    id: 'telegram',
+    name: 'Telegram Bot',
+    description: 'Send and receive messages via Telegram bot',
+    icon: Send,
+    color: 'text-sky-600',
+    bgColor: 'bg-sky-100 dark:bg-sky-900/20',
+    fields: [
+      { name: 'botToken', label: 'Bot Token', type: 'password', placeholder: '123456:ABC-DEF...' },
     ],
   },
   {
@@ -86,40 +142,6 @@ const TOOL_DEFINITIONS = [
       { name: 'phoneNumber', label: 'Phone Number', type: 'text', placeholder: '+1...' },
     ],
   },
-  {
-    id: 'neon',
-    name: 'Neon Database',
-    description: 'Serverless Postgres database connection',
-    icon: Database,
-    color: 'text-teal-600',
-    bgColor: 'bg-teal-100 dark:bg-teal-900/20',
-    fields: [
-      { name: 'databaseUrl', label: 'Database URL', type: 'password', placeholder: 'postgresql://...' },
-    ],
-    info: 'Usually configured via environment variables',
-  },
-  {
-    id: 'google_oauth',
-    name: 'Google (Gmail + Calendar)',
-    description: 'Send/search emails and manage calendar events via Google APIs',
-    icon: Calendar,
-    color: 'text-red-600',
-    bgColor: 'bg-red-100 dark:bg-red-900/20',
-    fields: [],
-    oauth: true,
-    info: 'Requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables',
-  },
-  {
-    id: 'telegram',
-    name: 'Telegram Bot',
-    description: 'Send and receive messages via Telegram bot',
-    icon: Send,
-    color: 'text-sky-600',
-    bgColor: 'bg-sky-100 dark:bg-sky-900/20',
-    fields: [
-      { name: 'botToken', label: 'Bot Token', type: 'password', placeholder: '123456:ABC-DEF...' },
-    ],
-  },
 ]
 
 export default function SettingsPage() {
@@ -130,15 +152,15 @@ export default function SettingsPage() {
   const [testResults, setTestResults] = useState<{ [key: string]: { success: boolean; message?: string } }>({})
   const [formData, setFormData] = useState<{ [key: string]: any }>({})
   const [oauthBanner, setOauthBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [selectedToolId, setSelectedToolId] = useState<string | null>(null)
+  const detailRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     fetchConfigs()
 
-    // Handle Google OAuth callback query params
     const googleStatus = searchParams.get('google')
     if (googleStatus === 'connected') {
       setOauthBanner({ type: 'success', message: 'Google account connected successfully!' })
-      // Clean up URL
       window.history.replaceState({}, '', '/settings')
     } else if (googleStatus === 'error') {
       const reason = searchParams.get('reason') || 'unknown'
@@ -146,7 +168,7 @@ export default function SettingsPage() {
         access_denied: 'Google account connection was cancelled.',
         no_code: 'No authorization code received from Google.',
         token_exchange_failed: 'Failed to exchange authorization code for tokens.',
-        missing_credentials: 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not configured.',
+        missing_credentials: 'Google OAuth is not configured on the server.',
       }
       setOauthBanner({ type: 'error', message: messages[reason] || `Google connection failed: ${reason}` })
       window.history.replaceState({}, '', '/settings')
@@ -167,7 +189,7 @@ export default function SettingsPage() {
 
   const handleSave = async (toolId: string) => {
     setLoading({ ...loading, [toolId]: true })
-    
+
     try {
       const response = await fetch('/api/settings/tools', {
         method: 'POST',
@@ -181,8 +203,7 @@ export default function SettingsPage() {
       if (!response.ok) throw new Error('Failed to save configuration')
 
       await fetchConfigs()
-      setFormData({ ...formData, [toolId]: {} }) // Clear form after save
-      alert('Configuration saved successfully!')
+      setFormData({ ...formData, [toolId]: {} })
     } catch (error) {
       console.error('Failed to save tool config:', error)
       alert('Failed to save configuration. Please try again.')
@@ -235,17 +256,35 @@ export default function SettingsPage() {
     })
   }
 
-  const isConfigured = (toolId: string) => {
-    return configs.some((config) => config.tool === toolId && config.configured)
+  const getConfig = (toolId: string) => {
+    return configs.find((config) => config.tool === toolId && config.configured)
   }
+
+  const isConfigured = (toolId: string) => !!getConfig(toolId)
+
+  const handleSelectTool = (toolId: string) => {
+    setSelectedToolId(toolId)
+    setTimeout(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  const selectedTool = TOOL_DEFINITIONS.find(t => t.id === selectedToolId)
+  const configuredCount = TOOL_DEFINITIONS.filter(t => isConfigured(t.id)).length
 
   return (
     <div className="min-h-screen bg-background pb-[80px]">
-      <div className="container mx-auto px-6 py-6">
+      <div className="container mx-auto px-6 py-6 max-w-3xl">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-2">Settings</h1>
-          <p className="text-muted-foreground">
-            Configure API keys and credentials for tool integrations
+          <div className="flex items-center gap-3 mb-1">
+            <Link href="/dashboard">
+              <Button variant="ghost" size="sm" className="gap-1 -ml-2">
+                <ArrowLeft className="h-4 w-4" />
+                Dashboard
+              </Button>
+            </Link>
+          </div>
+          <h1 className="text-3xl font-bold mb-1">Settings</h1>
+          <p className="text-muted-foreground text-sm">
+            {configuredCount}/{TOOL_DEFINITIONS.length} integrations configured
           </p>
         </div>
 
@@ -272,43 +311,78 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="space-y-4">
+        {/* Navigation grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
           {TOOL_DEFINITIONS.map((tool) => {
             const ToolIcon = tool.icon
             const configured = isConfigured(tool.id)
-            const testResult = testResults[tool.id]
+            const isSelected = selectedToolId === tool.id
 
             return (
-              <Card key={tool.id} className="border-border">
+              <button
+                key={tool.id}
+                onClick={() => handleSelectTool(tool.id)}
+                className={`relative flex flex-col items-center gap-1.5 p-3 rounded-lg border text-center transition-all ${
+                  isSelected
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                }`}
+              >
+                {configured && (
+                  <div className="absolute top-1.5 right-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                  </div>
+                )}
+                <div className={`p-1.5 rounded-md ${tool.bgColor}`}>
+                  <ToolIcon className={`h-4 w-4 ${tool.color}`} />
+                </div>
+                <span className="text-xs font-medium leading-tight">{tool.name}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Detail panel */}
+        {selectedTool && (() => {
+          const ToolIcon = selectedTool.icon
+          const configured = isConfigured(selectedTool.id)
+          const config = getConfig(selectedTool.id)
+          const testResult = testResults[selectedTool.id]
+
+          return (
+            <div ref={detailRef}>
+              <Card className={`border-border ${configured ? 'border-green-500/30 bg-green-500/[0.02]' : ''}`}>
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <div className="flex items-start gap-3">
-                      <div className={`p-2 rounded-lg ${tool.bgColor}`}>
-                        <ToolIcon className={`h-5 w-5 ${tool.color}`} />
+                      <div className={`p-2 rounded-lg ${selectedTool.bgColor}`}>
+                        <ToolIcon className={`h-5 w-5 ${selectedTool.color}`} />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <CardTitle>{tool.name}</CardTitle>
-                          {configured && (
-                            <Badge variant="outline" className="bg-green-100 dark:bg-green-900/20 text-green-600 border-0">
-                              <CheckCircle2 className="h-3 w-3 mr-1" />
-                              Configured
-                            </Badge>
-                          )}
+                          <CardTitle>{selectedTool.name}</CardTitle>
                         </div>
-                        <CardDescription className="mt-1">{tool.description}</CardDescription>
-                        {tool.info && (
-                          <p className="text-xs text-muted-foreground mt-1">ℹ️ {tool.info}</p>
-                        )}
+                        <CardDescription className="mt-1">{selectedTool.description}</CardDescription>
                       </div>
                     </div>
+                    {configured ? (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 shrink-0">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span className="text-xs font-medium">Connected</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-muted-foreground shrink-0">
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+                        <span className="text-xs font-medium">Not configured</span>
+                      </div>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {'oauth' in tool && tool.oauth ? (
+                    {selectedTool.oauth ? (
                       <div className="space-y-4">
-                        <div className="flex flex-wrap gap-2 pt-2">
+                        <div className="flex flex-wrap gap-2">
                           <Button
                             size="sm"
                             onClick={() => window.location.href = '/api/auth/google'}
@@ -331,10 +405,10 @@ export default function SettingsPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleTest(tool.id)}
-                              disabled={testing[tool.id]}
+                              onClick={() => handleTest(selectedTool.id)}
+                              disabled={testing[selectedTool.id]}
                             >
-                              {testing[tool.id] ? (
+                              {testing[selectedTool.id] ? (
                                 <>
                                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                                   Testing...
@@ -365,27 +439,64 @@ export default function SettingsPage() {
                       </div>
                     ) : (
                     <>
-                    {tool.fields.map((field) => (
-                      <div key={field.name} className="space-y-2">
-                        <Label htmlFor={`${tool.id}-${field.name}`}>{field.label}</Label>
-                        <Input
-                          id={`${tool.id}-${field.name}`}
-                          type={field.type}
-                          placeholder={field.placeholder}
-                          value={formData[tool.id]?.[field.name] || ''}
-                          onChange={(e) => updateFormData(tool.id, field.name, e.target.value)}
-                          className="bg-secondary border-border"
-                        />
+                    {selectedTool.fields.map((field) => {
+                      const maskedValue = config?.maskedData?.[field.name]
+                      const hasInput = !!(formData[selectedTool.id]?.[field.name])
+
+                      return (
+                        <div key={field.name} className="space-y-2">
+                          <Label htmlFor={`${selectedTool.id}-${field.name}`}>{field.label}</Label>
+                          <div className="relative">
+                            <Input
+                              id={`${selectedTool.id}-${field.name}`}
+                              type={field.type}
+                              placeholder={maskedValue || field.placeholder}
+                              value={formData[selectedTool.id]?.[field.name] || ''}
+                              onChange={(e) => updateFormData(selectedTool.id, field.name, e.target.value)}
+                              className={`bg-secondary border-border ${maskedValue && !hasInput ? 'placeholder:text-foreground/50' : ''}`}
+                            />
+                          </div>
+                          {maskedValue && !hasInput && (
+                            <p className="text-xs text-muted-foreground">
+                              Current value: <span className="font-mono">{maskedValue}</span>
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })}
+
+                    {/* Model selector for LLM providers */}
+                    {selectedTool.models && (
+                      <div className="space-y-2">
+                        <Label htmlFor={`${selectedTool.id}-model`}>Default Model</Label>
+                        <div className="relative">
+                          <select
+                            id={`${selectedTool.id}-model`}
+                            value={formData[selectedTool.id]?.model || config?.maskedData?.model || selectedTool.models[0].id}
+                            onChange={(e) => updateFormData(selectedTool.id, 'model', e.target.value)}
+                            className="w-full h-9 rounded-md border border-border bg-secondary px-3 py-1 text-sm appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            {selectedTool.models.map((m) => (
+                              <option key={m.id} value={m.id}>{m.name} ({m.id})</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        </div>
+                        {config?.maskedData?.model && (
+                          <p className="text-xs text-muted-foreground">
+                            Currently using: {selectedTool.models.find(m => m.id === config.maskedData?.model)?.name || config.maskedData.model}
+                          </p>
+                        )}
                       </div>
-                    ))}
+                    )}
 
                     <div className="flex flex-wrap gap-2 pt-2">
                       <Button
                         size="sm"
-                        onClick={() => handleSave(tool.id)}
-                        disabled={loading[tool.id] || !formData[tool.id]}
+                        onClick={() => handleSave(selectedTool.id)}
+                        disabled={loading[selectedTool.id] || !formData[selectedTool.id]}
                       >
-                        {loading[tool.id] ? (
+                        {loading[selectedTool.id] ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Saving...
@@ -393,7 +504,7 @@ export default function SettingsPage() {
                         ) : (
                           <>
                             <Key className="h-4 w-4 mr-2" />
-                            Save Configuration
+                            {configured ? 'Update' : 'Save Configuration'}
                           </>
                         )}
                       </Button>
@@ -401,10 +512,10 @@ export default function SettingsPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => handleTest(tool.id)}
-                        disabled={!configured || testing[tool.id]}
+                        onClick={() => handleTest(selectedTool.id)}
+                        disabled={!configured || testing[selectedTool.id]}
                       >
-                        {testing[tool.id] ? (
+                        {testing[selectedTool.id] ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Testing...
@@ -436,24 +547,25 @@ export default function SettingsPage() {
                   </div>
                 </CardContent>
               </Card>
-            )
-          })}
-        </div>
+            </div>
+          )
+        })()}
+
+        {!selectedTool && (
+          <Card className="border-border border-dashed">
+            <CardContent className="py-12 text-center">
+              <p className="text-muted-foreground text-sm">Select an integration above to configure it</p>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="mt-6 border-yellow-500/20 bg-yellow-500/5">
-          <CardHeader>
-            <CardTitle className="text-yellow-600 dark:text-yellow-400">Security Note</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-yellow-600 dark:text-yellow-400">Security</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground space-y-2">
-            <p>
-              • API keys are encrypted using AES-GCM before being stored in the database
-            </p>
-            <p>
-              • Keys are never exposed to the client-side and are only used in server-side API routes
-            </p>
-            <p>
-              • For production deployments, consider using environment variables for additional security
-            </p>
+          <CardContent className="text-xs text-muted-foreground space-y-1">
+            <p>API keys are encrypted using AES-GCM before being stored in the database.</p>
+            <p>Keys are never exposed to the client and are only used in server-side API routes.</p>
           </CardContent>
         </Card>
       </div>

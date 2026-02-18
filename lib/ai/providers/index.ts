@@ -22,15 +22,13 @@ export const DEFAULT_MODELS: Record<string, string> = {
 export const AVAILABLE_MODELS: Record<string, Array<{ id: string; name: string }>> = {
   openai: [
     { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2' },
-    { id: 'o3', name: 'o3' },
-    { id: 'o4-mini', name: 'o4-mini' },
-    { id: 'gpt-4.1', name: 'GPT-4.1' },
-    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
+    { id: 'gpt-5-mini-2025-08-07', name: 'GPT-5 Mini' },
+    { id: 'gpt-5-2025-08-07', name: 'GPT-5' },
   ],
   anthropic: [
-    { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },
     { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
-    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
   ],
 };
 

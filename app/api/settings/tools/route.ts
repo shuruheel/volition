@@ -7,25 +7,48 @@ import { requireUserId } from '@/lib/auth';
  * GET /api/settings/tools
  * Get tool configurations (masked)
  */
+function maskValue(value: string): string {
+  if (!value || value.length < 8) return '****';
+  return value.slice(0, 4) + '...' + value.slice(-4);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const userId = await requireUserId();
-    
+
     const configs = await sql`
-      SELECT id, tool, created_at, updated_at
+      SELECT id, tool, data_encrypted, created_at, updated_at
       FROM tool_configs
       WHERE user_id = ${userId}
     `;
-    
-    // Return tool list with masked values
-    const tools = configs.map((config: any) => ({
-      id: config.id,
-      tool: config.tool,
-      configured: true,
-      createdAt: config.created_at,
-      updatedAt: config.updated_at,
+
+    const tools = await Promise.all(configs.map(async (config: any) => {
+      let maskedData: Record<string, string> = {};
+      try {
+        const data = JSON.parse(await decrypt(config.data_encrypted));
+        for (const [key, val] of Object.entries(data)) {
+          if (typeof val === 'string') {
+            // Don't mask non-secret fields like model selection
+            if (key === 'model') {
+              maskedData[key] = val;
+            } else {
+              maskedData[key] = maskValue(val);
+            }
+          }
+        }
+      } catch {
+        // Decryption failed, return without masked data
+      }
+      return {
+        id: config.id,
+        tool: config.tool,
+        configured: true,
+        maskedData,
+        createdAt: config.created_at,
+        updatedAt: config.updated_at,
+      };
     }));
-    
+
     return NextResponse.json(tools);
   } catch (error) {
     console.error('Failed to fetch tool configs:', error);
@@ -53,7 +76,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Validate tool name
-    const validTools = ['openai', 'neon', 'firecrawl', 'supermemory', 'browser_use', 'twilio', 'google_oauth', 'telegram'];
+    const validTools = ['openai', 'anthropic', 'neon', 'firecrawl', 'supermemory', 'browser_use', 'twilio', 'google_oauth', 'telegram'];
     if (!validTools.includes(tool)) {
       return NextResponse.json(
         { error: 'Invalid tool name' },
