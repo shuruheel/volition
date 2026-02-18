@@ -1,6 +1,6 @@
 /**
- * NextAuth config — edge-safe (no Node.js modules).
- * Used by middleware.ts for session checks.
+ * NextAuth config — lightweight (no Node.js modules).
+ * Used by proxy.ts for session checks.
  * The full auth config (with DB callbacks) is in lib/auth.ts.
  */
 import type { NextAuthConfig } from 'next-auth';

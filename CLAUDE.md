@@ -65,7 +65,7 @@ Skills are enabled per-agent via `skills TEXT[]` column on agents table.
 - `tsconfig.json`: Includes `"workflow"` plugin alongside `"next"` plugin
 - `typescript.ignoreBuildErrors: true` in next config
 - `vercel.json`: Cron job (`* * * * *`) for `/api/scheduler/tick`
-- `middleware.ts`: NextAuth middleware protecting all routes except `/api/auth`, `/login`, `/api/twilio`, `/api/telegram`, `/api/scheduler`
+- `proxy.ts`: NextAuth proxy (Next.js 16) protecting all routes except `/`, `/api/auth`, `/login`, `/api/twilio`, `/api/telegram`, `/api/scheduler`
 
 ### Database
 
@@ -198,9 +198,9 @@ All API routes use `NextRequest`/`NextResponse` with try/catch. Use `sql` tagged
 
 ### Authentication
 
-- `lib/auth.config.ts` — Edge-safe config (imported by middleware). Does NOT import any Node.js modules.
+- `lib/auth.config.ts` — Lightweight config (imported by `proxy.ts`). Does NOT import any Node.js modules.
 - `lib/auth.ts` — Full config with DB callbacks (imported by API routes and server components). Exports `auth()`, `getUserId()`, `requireUserId()`.
-- Never import `lib/auth.ts` from middleware or edge runtime — use `lib/auth.config.ts` instead.
+- Never import `lib/auth.ts` from `proxy.ts` — use `lib/auth.config.ts` instead.
 
 ### Adding New Workflow Tools
 
@@ -219,7 +219,7 @@ Prefixes: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`. Keep subjects under 8
 - **WebSocket**: `app/api/twilio/stream/route.ts` is a stub — Next.js Route Handlers don't support WebSocket upgrades.
 - **Spend tracking**: Total Spend metric is mocked at $0.
 - **Workflow tool format**: Workflow tools must use raw OpenAI JSON Schema format. Do NOT use AI SDK `tool()` helper in workflow files.
-- **Edge vs Node split**: Middleware uses `lib/auth.config.ts` (edge-safe). API routes use `lib/auth.ts` (full, server-only). Never mix them.
+- **Auth config split**: `proxy.ts` uses `lib/auth.config.ts` (lightweight). API routes use `lib/auth.ts` (full, server-only). Never mix them.
 
 ## Supplemental Docs
 

@@ -160,6 +160,12 @@ export function LandingPage() {
             >
               GitHub
             </a>
+            <Link
+              href="/dashboard"
+              className="text-sm text-white/50 hover:text-white transition-colors px-3 py-1.5"
+            >
+              Dashboard
+            </Link>
             <button
               onClick={() => signIn("google", { callbackUrl: "/" })}
               className="text-sm font-medium bg-white text-black px-4 py-2 rounded-lg hover:bg-white/90 transition-colors"

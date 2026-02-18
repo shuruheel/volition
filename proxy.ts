@@ -18,7 +18,7 @@ export const config = {
      * - /_next (Next.js internals)
      * - /favicon.ico, /sitemap.xml, /robots.txt (static files)
      *
-     * Note: .+ (not .*) ensures the root path / is excluded from middleware
+     * Note: .+ (not .*) ensures the root path / is excluded from proxy
      */
     '/((?!api/auth|login|api/twilio|api/telegram|api/scheduler|_next|favicon\\.ico|sitemap\\.xml|robots\\.txt).+)',
   ],
