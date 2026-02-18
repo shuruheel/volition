@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { WebSocket } from 'ws';
 import { sql } from '@/lib/db';
+import { decrypt } from '@/lib/crypto';
 
 // Set runtime to nodejs for WebSocket support
 export const runtime = 'nodejs';
@@ -146,12 +147,36 @@ function handleOpenAIMessage(
 /**
  * Initialize OpenAI Realtime WebSocket connection
  */
+async function resolveOpenAIKeyForCall(callId: string): Promise<string> {
+  // Look up the call's agent owner to resolve their OpenAI key
+  const calls = await sql`
+    SELECT a.user_id FROM calls c
+    JOIN agents a ON a.id = c.agent_id
+    WHERE c.id = ${callId}
+  `;
+  if (calls.length > 0) {
+    const userId = calls[0].user_id;
+    const configs = await sql`
+      SELECT data_encrypted FROM tool_configs
+      WHERE user_id = ${userId} AND tool = 'openai'
+    `;
+    if (configs.length > 0) {
+      const data = JSON.parse(await decrypt(configs[0].data_encrypted));
+      if (data.apiKey) return data.apiKey;
+    }
+  }
+  // Fallback to env var for platform-level key
+  if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+  throw new Error('No OpenAI API key available for this call');
+}
+
 async function connectToOpenAI(callId: string, context: string): Promise<WebSocket> {
+  const apiKey = await resolveOpenAIKeyForCall(callId);
   const openaiWs = new WebSocket(
     'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
     {
       headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'OpenAI-Beta': 'realtime=v1',
       },
     }

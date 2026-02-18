@@ -4,7 +4,6 @@ import { decrypt } from '@/lib/crypto';
 import { requireUserId } from '@/lib/auth';
 import twilio from 'twilio';
 import { BrowserUseClient } from 'browser-use-sdk';
-import { openai } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 
 /**
@@ -27,8 +26,11 @@ export async function POST(request: NextRequest) {
     
     switch (tool) {
       case 'openai':
-        return await testOpenAI();
+        return await testOpenAI(userId);
         
+      case 'anthropic':
+        return await testAnthropic(userId);
+
       case 'neon':
         return await testNeon();
         
@@ -68,14 +70,32 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function testOpenAI() {
+async function testOpenAI(userId: string) {
   try {
+    const configs = await sql`
+      SELECT data_encrypted FROM tool_configs
+      WHERE user_id = ${userId} AND tool = 'openai'
+    `;
+
+    if (configs.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'OpenAI not configured',
+      });
+    }
+
+    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
+    const apiKey = data.apiKey;
+
+    const { createOpenAI } = await import('@ai-sdk/openai');
+    const provider = createOpenAI({ apiKey });
+
     const result = await generateText({
-      model: openai('gpt-5.2-2025-12-11'),
+      model: provider('gpt-5-nano-2025-08-07'),
       prompt: 'Say "test successful" if you can read this.',
       maxTokens: 10,
     });
-    
+
     return NextResponse.json({
       success: true,
       message: 'OpenAI API connection successful',
@@ -83,6 +103,42 @@ async function testOpenAI() {
     });
   } catch (error) {
     throw new Error(`OpenAI test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+async function testAnthropic(userId: string) {
+  try {
+    const configs = await sql`
+      SELECT data_encrypted FROM tool_configs
+      WHERE user_id = ${userId} AND tool = 'anthropic'
+    `;
+
+    if (configs.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'Anthropic not configured',
+      });
+    }
+
+    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
+    const apiKey = data.apiKey;
+
+    const { createAnthropic } = await import('@ai-sdk/anthropic');
+    const provider = createAnthropic({ apiKey });
+
+    const result = await generateText({
+      model: provider('claude-haiku-4-5'),
+      prompt: 'Say "test successful" if you can read this.',
+      maxTokens: 10,
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: 'Anthropic API connection successful',
+      response: result.text,
+    });
+  } catch (error) {
+    throw new Error(`Anthropic test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 

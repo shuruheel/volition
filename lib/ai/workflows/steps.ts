@@ -563,73 +563,6 @@ export async function executeLLMDecisionStep(args: {
     {
       type: 'function',
       function: {
-        name: 'startResearchSession',
-        description: 'Start a new research session and initialize tracking',
-        parameters: {
-          type: 'object',
-          properties: {
-            title: { type: 'string', description: 'Title for the research session' },
-          },
-          required: ['title'],
-          additionalProperties: false,
-        },
-      },
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'planResearchQueries',
-        description: 'Decompose a research topic into focused search queries. This tool checks Supermemory for existing research to avoid duplication and generates 3-5 high-quality search queries that explore different angles. Use this BEFORE calling firecrawlResearch to ensure better query quality and avoid redundant research.',
-        parameters: {
-          type: 'object',
-          properties: {
-            researchTopic: { 
-              type: 'string',
-              description: 'The research topic or title to decompose into focused search queries',
-            },
-          },
-          required: ['researchTopic'],
-          additionalProperties: false,
-        },
-      },
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'firecrawlResearch',
-        description: 'Search and scrape the web using a focused query. For best results, first use planResearchQueries to get optimized queries based on existing research. Call multiple times with different queries to explore various angles.',
-        parameters: {
-          type: 'object',
-          properties: {
-            query: { type: 'string' },
-            limit: { type: 'integer', minimum: 1, maximum: 3, default: 3 },
-          },
-          required: ['query'],
-          additionalProperties: false,
-        },
-      },
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'completeResearchSession',
-        description: `Finalize a research session with a comprehensive summary. After completing a session, you MUST analyze what you've learned, identify knowledge gaps in your system prompt, and plan your next research session. If unclear about priorities, use askUser to seek guidance before starting a new session. This is part of your continuous research process - do NOT stop after completing one session.`,
-        parameters: {
-          type: 'object',
-          properties: {
-            summary: { 
-              type: 'string',
-              description: 'Comprehensive markdown summary synthesizing all findings from this research session. Include key insights, citations, and structured information.',
-            },
-          },
-          required: ['summary'],
-          additionalProperties: false,
-        },
-      },
-    },
-    {
-      type: 'function',
-      function: {
         name: 'logActivity',
         description: 'Log a completed activity to the database. Use this to record important events like completed research, viewed webpages, tasks done, etc.',
         parameters: {
@@ -703,8 +636,81 @@ export async function executeLLMDecisionStep(args: {
     },
   });
 
-  // Memory tools (always available if user has Google Drive access)
-  if (userId) {
+  // Research tools (only if firecrawl is enabled)
+  if (args.enabledTools.includes('firecrawl')) {
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'startResearchSession',
+          description: 'Start a new research session and initialize tracking',
+          parameters: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'Title for the research session' },
+            },
+            required: ['title'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'planResearchQueries',
+          description: 'Decompose a research topic into focused search queries. This tool checks Supermemory for existing research to avoid duplication and generates 3-5 high-quality search queries that explore different angles. Use this BEFORE calling firecrawlResearch to ensure better query quality and avoid redundant research.',
+          parameters: {
+            type: 'object',
+            properties: {
+              researchTopic: {
+                type: 'string',
+                description: 'The research topic or title to decompose into focused search queries',
+              },
+            },
+            required: ['researchTopic'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'firecrawlResearch',
+          description: 'Search and scrape the web using a focused query. For best results, first use planResearchQueries to get optimized queries based on existing research. Call multiple times with different queries to explore various angles.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string' },
+              limit: { type: 'integer', minimum: 1, maximum: 3, default: 3 },
+            },
+            required: ['query'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'completeResearchSession',
+          description: `Finalize a research session with a comprehensive summary. After completing a session, you MUST analyze what you've learned, identify knowledge gaps in your system prompt, and plan your next research session. If unclear about priorities, use askUser to seek guidance before starting a new session. This is part of your continuous research process - do NOT stop after completing one session.`,
+          parameters: {
+            type: 'object',
+            properties: {
+              summary: {
+                type: 'string',
+                description: 'Comprehensive markdown summary synthesizing all findings from this research session. Include key insights, citations, and structured information.',
+              },
+            },
+            required: ['summary'],
+            additionalProperties: false,
+          },
+        },
+      }
+    );
+  }
+
+  // Memory tools (only if user has Google OAuth configured for Drive access)
+  if (userId && args.enabledTools.includes('google')) {
     tools.push(
       {
         type: 'function',
@@ -1421,13 +1427,71 @@ export async function loadMemoryContextStep(
 
   try {
     const { readMemoryFile } = await import('@/lib/integrations/google-drive');
+    const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> =>
+      Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
     const [soulMd, preferencesMd] = await Promise.all([
-      readMemoryFile(userId, agentId, 'soul.md').catch(() => null),
-      readMemoryFile(userId, agentId, 'preferences.md').catch(() => null),
+      withTimeout(readMemoryFile(userId, agentId, 'soul.md'), 10000).catch(() => null),
+      withTimeout(readMemoryFile(userId, agentId, 'preferences.md'), 10000).catch(() => null),
     ]);
     return { soulMd: soulMd || null, preferencesMd: preferencesMd || null };
   } catch {
     return { soulMd: null, preferencesMd: null };
   }
+}
+
+/**
+ * Pre-flight validation: check whether each tool in enabledTools
+ * has its underlying integration configured (DB tool_configs or env var).
+ * Returns { valid, missing } — does NOT block, just reports.
+ */
+export async function validateToolConfigsStep(
+  userId: string | null,
+  enabledTools: string[]
+): Promise<{ valid: boolean; missing: string[] }> {
+  'use step';
+
+  if (!userId || enabledTools.length === 0) {
+    return { valid: true, missing: [] };
+  }
+
+  // Fetch all configured tool_configs for this user
+  const rows = await sql<{ tool: string }[]>`
+    SELECT tool FROM tool_configs WHERE user_id = ${userId}
+  `;
+  const configuredTools = new Set(rows.map(r => r.tool));
+
+  const missing: string[] = [];
+
+  for (const tool of enabledTools) {
+    switch (tool) {
+      case 'google':
+        if (!configuredTools.has('google_oauth')) {
+          missing.push('google');
+        }
+        break;
+      case 'firecrawl':
+        if (!configuredTools.has('firecrawl') && !process.env.FIRECRAWL_API_KEY) {
+          missing.push('firecrawl');
+        }
+        break;
+      case 'supermemory':
+        if (!configuredTools.has('supermemory') && !process.env.SUPERMEMORY_API_KEY) {
+          missing.push('supermemory');
+        }
+        break;
+      case 'browser':
+        if (!configuredTools.has('browser_use') && !process.env.BROWSER_USE_API_KEY) {
+          missing.push('browser');
+        }
+        break;
+      case 'telegram':
+        if (!configuredTools.has('telegram') && !process.env.TELEGRAM_BOT_TOKEN) {
+          missing.push('telegram');
+        }
+        break;
+    }
+  }
+
+  return { valid: missing.length === 0, missing };
 }
 

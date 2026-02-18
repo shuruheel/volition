@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { HeartbeatIndicator } from "@/components/heartbeat-indicator"
 import { AgentAnalytics } from "@/components/agent-analytics"
-import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone, LayoutTemplate, Sparkles, Settings, LogOut } from "lucide-react"
+import { Brain, Play, Pause, Trash2, TrendingUp, AlertCircle, DollarSign, Zap, Mail, Phone, LayoutTemplate, Sparkles, Settings, LogOut, CheckCircle2, Circle } from "lucide-react"
 import Link from "next/link"
 import type { Activity } from "@/lib/db"
 
@@ -54,6 +54,19 @@ export default function DashboardPage() {
     callsMade: 0,
   })
   const [loading, setLoading] = useState(true)
+  const [configuredTools, setConfiguredTools] = useState<string[]>([])
+
+  // Fetch tool configs for setup progress
+  useEffect(() => {
+    fetch('/api/settings/tools')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setConfiguredTools(data.map((c: any) => c.tool))
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   // Fetch agents
   useEffect(() => {
@@ -330,6 +343,64 @@ export default function DashboardPage() {
       </div>
 
       <div className="container mx-auto px-6 py-6">
+        {/* Setup progress */}
+        {(() => {
+          const setupItems = [
+            { id: 'openai', label: 'OpenAI', required: true },
+            { id: 'google_oauth', label: 'Google', required: false },
+            { id: 'firecrawl', label: 'Firecrawl', required: false },
+            { id: 'anthropic', label: 'Anthropic', required: false },
+            { id: 'supermemory', label: 'Supermemory', required: false },
+            { id: 'telegram', label: 'Telegram', required: false },
+            { id: 'browser_use', label: 'Browser-Use', required: false },
+            { id: 'twilio', label: 'Twilio', required: false },
+          ]
+          const configured = setupItems.filter(s => configuredTools.includes(s.id)).length
+          const total = setupItems.length
+          const pct = Math.round((configured / total) * 100)
+
+          return configured < total ? (
+            <div className="mb-6">
+              <Card className="border-border">
+                <CardContent className="py-4 px-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Settings className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Setup Progress</span>
+                      <span className="text-xs text-muted-foreground">{configured}/{total} integrations</span>
+                    </div>
+                    <Link href="/settings">
+                      <Button variant="ghost" size="sm" className="text-xs h-7">
+                        Configure
+                      </Button>
+                    </Link>
+                  </div>
+                  <div className="h-1.5 bg-secondary rounded-full mb-3 overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {setupItems.map(item => (
+                      <div key={item.id} className="flex items-center gap-1.5">
+                        {configuredTools.includes(item.id) ? (
+                          <CheckCircle2 className="h-3 w-3 text-green-500" />
+                        ) : (
+                          <Circle className="h-3 w-3 text-muted-foreground/40" />
+                        )}
+                        <span className={`text-xs ${configuredTools.includes(item.id) ? 'text-muted-foreground' : 'text-muted-foreground/60'}`}>
+                          {item.label}{item.required ? ' *' : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ) : null
+        })()}
+
         {/* Agent list */}
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">

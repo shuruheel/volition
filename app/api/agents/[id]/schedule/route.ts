@@ -52,24 +52,15 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const result = await sql`
       INSERT INTO agent_schedules (agent_id, schedule_type, interval_minutes, cron_expression, checklist, enabled, next_run_at)
       VALUES (${id}, ${schedule_type}, ${interval_minutes || null}, ${cron_expression || null}, ${checklist || null}, ${enabled !== false}, ${nextRun})
-      ON CONFLICT (agent_id) DO NOTHING
+      ON CONFLICT (agent_id) DO UPDATE SET
+        schedule_type = EXCLUDED.schedule_type,
+        interval_minutes = EXCLUDED.interval_minutes,
+        cron_expression = EXCLUDED.cron_expression,
+        checklist = EXCLUDED.checklist,
+        enabled = EXCLUDED.enabled,
+        next_run_at = EXCLUDED.next_run_at
       RETURNING *
     `;
-
-    if (result.length === 0) {
-      const updated = await sql`
-        UPDATE agent_schedules
-        SET schedule_type = ${schedule_type},
-            interval_minutes = ${interval_minutes || null},
-            cron_expression = ${cron_expression || null},
-            checklist = ${checklist || null},
-            enabled = ${enabled !== false},
-            next_run_at = ${nextRun}
-        WHERE agent_id = ${id}
-        RETURNING *
-      `;
-      return NextResponse.json(updated[0]);
-    }
 
     return NextResponse.json(result[0]);
   } catch (error: any) {

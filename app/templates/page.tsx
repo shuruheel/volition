@@ -1,11 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Mail, Search, Briefcase, Newspaper, Brain, Zap } from "lucide-react"
+import { ArrowLeft, Mail, Search, Briefcase, Newspaper, Brain, Zap, AlertTriangle } from "lucide-react"
 import Link from "next/link"
 
 interface AgentTemplate {
@@ -36,7 +36,7 @@ const TEMPLATES: AgentTemplate[] = [
 4. Flag urgent emails that need the user's direct attention
 5. Schedule meetings when email threads suggest one is needed
 Always get user approval before sending any email or creating calendar events.`,
-    tools: ['openai', 'google', 'supermemory'],
+    tools: ['google', 'supermemory'],
     skills: ['email-digest', 'calendar-summary'],
     icon: Mail,
     color: 'text-blue-600',
@@ -57,7 +57,7 @@ Always get user approval before sending any email or creating calendar events.`,
 4. Synthesize research into clear, actionable summaries
 5. Identify knowledge gaps and suggest areas for deeper exploration
 Focus on quality over quantity. Cite sources and distinguish facts from opinions.`,
-    tools: ['openai', 'firecrawl', 'supermemory'],
+    tools: ['firecrawl', 'supermemory'],
     skills: ['research-deep-dive'],
     icon: Search,
     color: 'text-purple-600',
@@ -75,7 +75,7 @@ Focus on quality over quantity. Cite sources and distinguish facts from opinions
 5. Track responses and follow up on engaged prospects
 6. Never send more than 5 outreach emails per run
 Always personalize — generic templates get ignored. Reference specific details about the recipient.`,
-    tools: ['openai', 'google', 'firecrawl', 'supermemory'],
+    tools: ['google', 'firecrawl', 'supermemory'],
     skills: ['outreach-campaign'],
     icon: Briefcase,
     color: 'text-orange-600',
@@ -96,7 +96,7 @@ Always personalize — generic templates get ignored. Reference specific details
 4. Synthesize everything into a structured morning briefing
 5. Send the briefing via email to the user
 Structure: Top headlines, key insights, action items, and a forward-looking section.`,
-    tools: ['openai', 'google', 'firecrawl', 'supermemory'],
+    tools: ['google', 'firecrawl', 'supermemory'],
     skills: ['daily-briefing'],
     icon: Newspaper,
     color: 'text-amber-600',
@@ -119,7 +119,7 @@ Structure: Top headlines, key insights, action items, and a forward-looking sect
 6. Get user approval before any outreach
 7. Track application status and follow up on promising leads
 Focus on quality applications over volume. Tailor every message to the specific role and company.`,
-    tools: ['openai', 'google', 'firecrawl', 'supermemory'],
+    tools: ['google', 'firecrawl', 'supermemory'],
     skills: ['job-application', 'outreach-campaign'],
     icon: Zap,
     color: 'text-green-600',
@@ -131,9 +131,31 @@ Focus on quality applications over volume. Tailor every message to the specific 
   },
 ]
 
+// Map template tool names to tool_configs tool names
+const TOOL_CONFIG_MAP: Record<string, string> = {
+  google: 'google_oauth',
+  browser: 'browser_use',
+}
+
+function getConfigKey(tool: string): string {
+  return TOOL_CONFIG_MAP[tool] || tool
+}
+
 export default function TemplatesPage() {
   const router = useRouter()
   const [creating, setCreating] = useState<string | null>(null)
+  const [configuredTools, setConfiguredTools] = useState<Set<string>>(new Set())
+  const [toolsLoaded, setToolsLoaded] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/settings/tools')
+      .then(res => res.json())
+      .then((tools: { tool: string }[]) => {
+        setConfiguredTools(new Set(tools.map(t => t.tool)))
+      })
+      .catch(() => {})
+      .finally(() => setToolsLoaded(true))
+  }, [])
 
   const handleUseTemplate = async (template: AgentTemplate) => {
     setCreating(template.id)
@@ -211,6 +233,10 @@ export default function TemplatesPage() {
           {TEMPLATES.map(template => {
             const Icon = template.icon
             const isCreating = creating === template.id
+            const missingTools = toolsLoaded
+              ? template.tools.filter(t => !configuredTools.has(getConfigKey(t)))
+              : []
+            const hasMissing = missingTools.length > 0
 
             return (
               <Card key={template.id} className="border-border hover:border-primary/50 transition-all">
@@ -228,9 +254,18 @@ export default function TemplatesPage() {
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-1">Tools</p>
                     <div className="flex gap-1 flex-wrap">
-                      {template.tools.map(tool => (
-                        <Badge key={tool} variant="secondary" className="text-xs">{tool}</Badge>
-                      ))}
+                      {template.tools.map(tool => {
+                        const isMissing = toolsLoaded && !configuredTools.has(getConfigKey(tool))
+                        return (
+                          <Badge
+                            key={tool}
+                            variant="secondary"
+                            className={`text-xs ${isMissing ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' : ''}`}
+                          >
+                            {tool}{isMissing && ' ⚠'}
+                          </Badge>
+                        )
+                      })}
                     </div>
                   </div>
 
@@ -258,12 +293,23 @@ export default function TemplatesPage() {
                     </div>
                   )}
 
+                  {/* Missing tools warning */}
+                  {hasMissing && (
+                    <div className="flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="text-xs text-amber-800 dark:text-amber-400">
+                        Missing: {missingTools.join(', ')}.{' '}
+                        <Link href="/settings" className="underline font-medium">Configure in Settings</Link>
+                      </div>
+                    </div>
+                  )}
+
                   <Button
                     className="w-full mt-2"
                     onClick={() => handleUseTemplate(template)}
-                    disabled={isCreating}
+                    disabled={isCreating || hasMissing}
                   >
-                    {isCreating ? 'Creating...' : 'Use Template'}
+                    {isCreating ? 'Creating...' : hasMissing ? 'Missing Tools' : 'Use Template'}
                   </Button>
                 </CardContent>
               </Card>

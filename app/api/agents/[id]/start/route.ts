@@ -40,21 +40,25 @@ export async function POST(
     `;
 
     // Ensure a default heartbeat schedule exists (60-min interval)
-    const existingSchedules = await sql<any[]>`
-      SELECT id, enabled FROM agent_schedules WHERE agent_id = ${id} LIMIT 1
-    `;
+    try {
+      const existingSchedules = await sql<any[]>`
+        SELECT id, enabled FROM agent_schedules WHERE agent_id = ${id} LIMIT 1
+      `;
 
-    if (existingSchedules.length === 0) {
-      await sql`
-        INSERT INTO agent_schedules (agent_id, schedule_type, interval_minutes, enabled, next_run_at)
-        VALUES (${id}, 'heartbeat', 60, true, NOW() + INTERVAL '60 minutes')
-      `;
-    } else if (!existingSchedules[0].enabled) {
-      await sql`
-        UPDATE agent_schedules
-        SET enabled = true, next_run_at = NOW() + INTERVAL '60 minutes'
-        WHERE agent_id = ${id}
-      `;
+      if (existingSchedules.length === 0) {
+        await sql`
+          INSERT INTO agent_schedules (agent_id, schedule_type, interval_minutes, enabled, next_run_at)
+          VALUES (${id}, 'heartbeat', 60, true, NOW() + INTERVAL '60 minutes')
+        `;
+      } else if (!existingSchedules[0].enabled) {
+        await sql`
+          UPDATE agent_schedules
+          SET enabled = true, next_run_at = NOW() + INTERVAL '60 minutes'
+          WHERE agent_id = ${id}
+        `;
+      }
+    } catch (scheduleError) {
+      console.error(`[Agent Enable] Schedule creation failed (non-blocking):`, scheduleError);
     }
 
     await updateAgentStatus(id, {
@@ -67,7 +71,7 @@ export async function POST(
     const welcomePrompt = `You have just been enabled by the user. Introduce yourself briefly based on your system prompt, then use the askUser tool to ask the user what they would like you to work on. Do NOT start any research or tasks until the user responds. Keep your introduction concise and friendly.`;
 
     console.log(`[Agent Enable] Launching welcome workflow for agent ${id}`);
-    const run = await start(agentTaskWorkflow, [id, welcomePrompt, 5, 'welcome']);
+    const run = await start(agentTaskWorkflow, [id, welcomePrompt, 2, 'welcome']);
     console.log(`[Agent Enable] Welcome workflow started with runId: ${run.runId}`);
 
     const updatedAgent = await sql<Agent[]>`SELECT * FROM agents WHERE id = ${id}`.then(r => r[0]);

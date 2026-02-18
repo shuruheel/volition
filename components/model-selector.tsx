@@ -8,23 +8,21 @@ const PROVIDERS = [
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'GPT-5.2, o3, and other OpenAI models',
+    description: 'GPT-5.2, GPT-5, and GPT-5 Mini',
     models: [
       { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2', badge: 'Recommended' },
-      { id: 'o3', name: 'o3', badge: 'Reasoning' },
-      { id: 'o4-mini', name: 'o4-mini', badge: 'Fast' },
-      { id: 'gpt-4.1', name: 'GPT-4.1', badge: null },
-      { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', badge: 'Budget' },
+      { id: 'gpt-5-mini-2025-08-07', name: 'GPT-5 Mini', badge: 'Fast' },
+      { id: 'gpt-5-2025-08-07', name: 'GPT-5', badge: null },
     ],
   },
   {
     id: 'anthropic',
     name: 'Anthropic',
-    description: 'Claude Sonnet 4.5, Opus 4.6, and Haiku 4.5',
+    description: 'Claude Opus 4.6, Sonnet 4.6, and Haiku 4.5',
     models: [
-      { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', badge: 'Recommended' },
       { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', badge: 'Most Capable' },
-      { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', badge: 'Fast' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', badge: 'Recommended' },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', badge: 'Fast' },
     ],
   },
 ]
