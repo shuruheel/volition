@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
+import { requireUserId } from '@/lib/auth';
 import { generateSummary } from '@/lib/ai/utils';
 
 interface RouteContext {
@@ -15,6 +16,7 @@ export async function POST(
   context: RouteContext
 ) {
   try {
+    const userId = await requireUserId();
     const { id } = await context.params;
     const body = await request.json();
     const { transcript } = body;
@@ -26,9 +28,11 @@ export async function POST(
       );
     }
     
-    // Get call details
+    // Get call details (scoped to user's agents)
     const callResult = await sql`
-      SELECT * FROM calls WHERE id = ${id}
+      SELECT c.* FROM calls c
+      JOIN agents ag ON ag.id = c.agent_id
+      WHERE c.id = ${id} AND ag.user_id = ${userId}
     `;
     
     if (callResult.length === 0) {

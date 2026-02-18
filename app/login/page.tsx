@@ -27,7 +27,7 @@ export default function LoginPage() {
           <Button
             className="w-full gap-2"
             size="lg"
-            onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
+            onClick={() => signIn('google', { callbackUrl: '/' })}
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path

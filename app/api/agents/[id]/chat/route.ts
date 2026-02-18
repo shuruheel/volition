@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
+import { requireAgentOwnership } from '@/lib/auth';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -8,8 +9,7 @@ interface RouteContext {
 
 /**
  * POST /api/agents/:id/chat
- * Send a chat message to an agent. Stores the message and triggers
- * a chat workflow if the agent is enabled and idle.
+ * Send a chat message to an agent (owned by authenticated user).
  */
 export async function POST(
   request: NextRequest,
@@ -17,37 +17,22 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
+    await requireAgentOwnership(id);
     const body = await request.json();
     const { content } = body;
 
     if (!content || typeof content !== 'string' || !content.trim()) {
-      return NextResponse.json(
-        { error: 'Message content is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Message content is required' }, { status: 400 });
     }
 
-    // Fetch agent
-    const agents = await sql<Agent[]>`
-      SELECT * FROM agents WHERE id = ${id}
-    `;
-
-    if (agents.length === 0) {
-      return NextResponse.json(
-        { error: 'Agent not found' },
-        { status: 404 }
-      );
-    }
-
+    const agents = await sql<Agent[]>`SELECT * FROM agents WHERE id = ${id}`;
     const agent = agents[0];
 
-    // Store the user message as an activity
     await sql`
       INSERT INTO activities (agent_id, type, status, payload)
       VALUES (${id}, 'user_message', 'completed', ${JSON.stringify({ content: content.trim() })})
     `;
 
-    // If agent is not enabled, message is stored but no workflow triggered
     if (!agent.enabled) {
       return NextResponse.json({
         message: 'Message stored. Agent is disabled — enable it to get responses.',
@@ -55,7 +40,6 @@ export async function POST(
       });
     }
 
-    // If agent is already active, message is stored for context (the running workflow will see it)
     if (agent.status === 'active') {
       return NextResponse.json({
         message: 'Message stored. Agent is currently running and will see your message.',
@@ -63,23 +47,19 @@ export async function POST(
       });
     }
 
-    // Atomically claim the agent for a chat workflow (prevents race conditions)
     const claimed = await sql<Agent[]>`
-      UPDATE agents
-      SET status = 'active', updated_at = NOW()
+      UPDATE agents SET status = 'active', updated_at = NOW()
       WHERE id = ${id} AND status = 'idle'
       RETURNING *
     `;
 
     if (claimed.length === 0) {
-      // Another process claimed it between our check and update
       return NextResponse.json({
         message: 'Message stored. Agent is busy and will see your message.',
         workflowTriggered: false,
       });
     }
 
-    // Launch a chat workflow (10 steps max)
     const chatPrompt = `The user just sent you a message: "${content.trim()}"\n\nRespond to their message and take any requested actions.`;
 
     const { start } = await import('workflow/api');
@@ -93,11 +73,11 @@ export async function POST(
       workflowTriggered: true,
       runId: run.runId,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'Agent not found' || error?.message === 'Authentication required') {
+      return NextResponse.json({ error: error.message }, { status: error.message === 'Authentication required' ? 401 : 404 });
+    }
     console.error('Failed to process chat message:', error);
-    return NextResponse.json(
-      { error: 'Failed to process chat message' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to process chat message' }, { status: 500 });
   }
 }

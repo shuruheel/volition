@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireUserId } from '@/lib/auth';
 import { sendTelegramMessage } from '@/lib/integrations/telegram';
 
 /**
  * POST /api/telegram/send
- * Send a message to a Telegram chat
+ * Send a message to a Telegram chat (authenticated)
  */
 export async function POST(request: NextRequest) {
   try {
+    await requireUserId();
     const body = await request.json();
     const { chatId, text, parseMode } = body;
 

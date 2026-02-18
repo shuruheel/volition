@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
-import { requireUserId } from '@/lib/auth';
+import { requireAgentOwnership } from '@/lib/auth';
 import { getAllSkills } from '@/lib/skills/registry';
 
 /**
@@ -23,13 +23,13 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireUserId();
     const { agentId, skillId, enabled } = await request.json();
 
     if (!agentId || !skillId) {
       return NextResponse.json({ error: 'agentId and skillId are required' }, { status: 400 });
     }
 
+    await requireAgentOwnership(agentId);
     const agents = await sql`SELECT skills FROM agents WHERE id = ${agentId}`;
     if (agents.length === 0) {
       return NextResponse.json({ error: 'Agent not found' }, { status: 404 });

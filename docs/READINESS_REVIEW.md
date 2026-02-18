@@ -184,23 +184,26 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Google OAuth sign-in | Ready | Real auth, no mock |
-| Onboarding flow | Ready | API key encryption works |
-| Agent CRUD | Ready | Scoped to user |
+| Google OAuth sign-in | Ready | Real auth, deployed and tested on staging |
+| Onboarding flow | Ready | API key encryption works, redirect fixed |
+| Agent CRUD | Ready | Scoped to user via `requireAgentOwnership` |
 | Model selection (OpenAI/Anthropic) | Ready | Per-agent provider + model |
-| **Agent enable/disable lifecycle** | **Ready** | **New: `enabled` column, welcome/chat/heartbeat trigger types** |
-| **Chat-triggered workflows** | **Ready** | **New: `/api/agents/[id]/chat` with atomic status claim** |
-| **Trigger-aware prompts** | **Ready** | **New: welcome/chat/heartbeat/manual prompt variants** |
-| **Graceful mid-workflow disable** | **Ready** | **New: `checkAgentEnabledStep` in loop** |
+| **Agent enable/disable lifecycle** | **Ready** | **`enabled` column, welcome/chat/heartbeat trigger types** |
+| **Chat-triggered workflows** | **Ready** | **`/api/agents/[id]/chat` with atomic status claim** |
+| **Trigger-aware prompts** | **Ready** | **welcome/chat/heartbeat/manual prompt variants** |
+| **Graceful mid-workflow disable** | **Ready** | **`checkAgentEnabledStep` in loop** |
+| **Multi-user data isolation** | **Ready** | **26 routes secured with ownership checks** |
+| **API route authentication** | **Ready** | **All routes use `requireUserId`, `requireAgentOwnership`, or `requireActivityOwnership`** |
 | Workflow execution | Ready | Durable steps, trigger-type-aware step limits |
-| Research pipeline | Ready | Plan queries -> Firecrawl -> Supermemory |
+| Research pipeline | Ready | Plan queries -> Firecrawl -> Supermemory (public data only) |
 | HITL approval | Ready | Email and calendar require approval |
-| Activity feed + SSE | Ready | Real-time updates |
+| Activity feed + SSE | Ready | Real-time updates, scoped to user |
 | Skills system | Ready | 6 built-in, injectable into prompts |
 | Agent templates | Ready | 5 pre-built configurations |
 | Heartbeat scheduler | Ready | Vercel Cron + `enabled` check + 10-step limit |
-| Agent analytics | Ready | Queries activity/memory tables |
-| Settings encryption | Ready | AES-GCM per-user |
+| Agent analytics | Ready | Scoped to user's agents |
+| Settings encryption | Ready | AES-GCM per-user, APP_ENCRYPTION_KEY set for all Vercel environments |
+| Database migrations | Ready | Runner fixed (dotenv, Neon API, multi-statement, comments) |
 
 ### Needs Integration Testing
 
@@ -223,6 +226,10 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 
 | Issue | Impact | Workaround |
 |-------|--------|-----------|
+| **`withMemoryContext()` not wired up** | **Agents do not auto-load soul.md/preferences.md — they "forget" identity between runs** | **Agents can manually call `readMemory` tool, but this wastes a step** |
+| **Supermemory uses shared global API key** | **Admin can see all users' stored memories; no per-user isolation** | **Deprecate for personal memory; use only for public research cache** |
+| **No embedding-based memory retrieval** | **Large knowledge.md files loaded in full or not at all** | **Acceptable for now (OpenClaw also does full-file load)** |
+| **No memory file compaction** | **journal.md and knowledge.md grow indefinitely** | **Manual editing in Google Drive** |
 | Twilio WebSocket stream is a stub | Voice call streaming not functional | Outbound calls work, just no real-time audio streaming |
 | Total Spend metric is mocked at $0 | No cost tracking | Track via provider dashboards |
 | No global navigation component | Users must know page URLs or use dashboard links | Dashboard has links to Templates, Skills; each page has back-to-dashboard button |
@@ -232,9 +239,167 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 
 ### Fixes Applied
 
+#### v1 (Lifecycle Redesign)
+
 - **Removed mock-user-id fallbacks**: All 4 instances in `steps.ts` now throw `Error('User authentication required')` instead of silently falling back to `'mock-user-id'`. Email and calendar operations require a real authenticated user.
 - **Updated CLAUDE.md**: Removed outdated PGlite references, mock auth caveat, and wrong file paths. Reflects current multi-user, multi-provider architecture.
 - **Agent lifecycle redesign**: Replaced start/stop (run-once) with enable/disable (persistent assistant) model. Added `enabled` column, welcome workflows, chat-triggered workflows, trigger-aware prompts, heartbeat `enabled` checks, and graceful mid-workflow disable.
+
+#### v2 (Staging Deployment & Multi-User Security Hardening)
+
+**Database Migration Fixes:**
+- **dotenv loading**: `scripts/setup-db.ts` now loads `.env.local` via `dotenv` because `tsx` does not auto-load environment files like Next.js does.
+- **Neon SDK API**: Changed `sql(string)` to `sql.query(string)` — Neon's tagged-template client no longer supports direct string invocation.
+- **Multi-statement splitting**: Migration runner now splits SQL files on semicolons and executes statements individually, since Neon's HTTP driver does not support multi-statement prepared statements.
+- **Comment stripping**: Fixed a bug where SQL statements starting with `--` comments were filtered out during splitting, causing migrations like `ALTER TABLE ... ADD COLUMN google_id` to be silently skipped.
+- **Migrations 007/008 manually applied**: These were marked as applied in `schema_migrations` (seeded to avoid re-running 001-008 on existing tables) but had never actually run. Applied manually to fix missing composite UNIQUE constraint on `tool_configs(user_id, tool)` and missing `google_oauth` in the tool CHECK constraint.
+
+**Authentication Fixes:**
+- **NextAuth sign-in method**: Login page was doing `GET /api/auth/signin/google`, but NextAuth v5 requires POST. Fixed by using `signIn('google', { callbackUrl: '/' })` from `next-auth/react`.
+- **Onboarding redirect**: Login `callbackUrl` changed from `/dashboard` to `/` so the server component in `app/page.tsx` can check for onboarding requirements before redirecting to the dashboard.
+- **APP_ENCRYPTION_KEY for Preview**: The `parity` branch deploys as a Vercel Preview environment, which is separate from Production and Development. The encryption key was missing for Preview, causing all `tool_configs` writes to fail.
+
+**Data Isolation (Single-User Legacy Data):**
+- **Removed NULL user fallback**: `app/api/agents/route.ts` had `WHERE user_id = ${userId} OR user_id IS NULL`, which returned pre-existing unowned agents to every authenticated user. Removed the `OR user_id IS NULL` clause.
+
+**Comprehensive Multi-User Security Hardening (26 routes):**
+
+Added two ownership verification helpers to `lib/auth.ts`:
+- `requireAgentOwnership(agentId)` — verifies the authenticated user owns the agent
+- `requireActivityOwnership(activityId)` — verifies the authenticated user owns the activity (via agent join)
+
+Routes secured with `requireAgentOwnership`:
+- `app/api/agents/[id]/route.ts` (GET, PATCH, DELETE)
+- `app/api/agents/[id]/start/route.ts` (POST)
+- `app/api/agents/[id]/stop/route.ts` (POST)
+- `app/api/agents/[id]/chat/route.ts` (POST)
+- `app/api/agents/[id]/analytics/route.ts` (GET)
+- `app/api/agents/[id]/status/route.ts` (GET)
+- `app/api/agents/[id]/schedule/route.ts` (GET, POST, DELETE)
+- `app/api/calls/route.ts` (POST)
+- `app/api/memories/search/route.ts` (POST — now requires `agentId`)
+- `app/api/memories/store/route.ts` (POST)
+- `app/api/skills/route.ts` (POST)
+- `app/api/research/sessions/start/route.ts` (POST)
+
+Routes secured with `requireActivityOwnership`:
+- `app/api/activities/[id]/route.ts` (GET)
+- `app/api/activities/[id]/approve/route.ts` (POST)
+- `app/api/activities/[id]/reject/route.ts` (POST)
+- `app/api/activities/[id]/modify/route.ts` (POST)
+- `app/api/research/sessions/[id]/append/route.ts` (POST)
+- `app/api/research/sessions/[id]/complete/route.ts` (POST)
+
+Routes secured with `requireUserId` + user-scoped queries:
+- `app/api/activities/route.ts` (GET — all query branches join through agents for user scoping)
+- `app/api/activities/stream/route.ts` (GET — SSE stream scoped to user's agents)
+- `app/api/metrics/key/route.ts` (GET — all 7 metric queries join through agents)
+- `app/api/metrics/stream/route.ts` (GET — SSE stream scoped to user's agents)
+- `app/api/calls/route.ts` (GET — joins through agents for user scoping)
+- `app/api/calls/[id]/summary/route.ts` (POST — call lookup scoped to user's agents)
+- `app/api/browser/task/route.ts` (GET, POST)
+- `app/api/telegram/send/route.ts` (POST)
+- `app/api/telegram/setup/route.ts` (POST)
+
+---
+
+## Memory System Analysis
+
+### Supermemory — Security Concerns
+
+**Architecture**: Supermemory is an external semantic search API. Volition uses a single global `SUPERMEMORY_API_KEY` (set as an environment variable) shared across all users. Documents are stored with `metadata.agentId` and filtered at query time using `filters: { AND: [{ key: 'metadata.agentId', value: agentId }] }`.
+
+**Security issues**:
+1. **No user-level isolation**: All users' data lives in the same Supermemory workspace. An administrator with access to the Supermemory dashboard or API key can query any user's stored documents by changing the `agentId` filter — or by omitting it entirely.
+2. **Metadata-only filtering**: Filtering by `agentId` is a query-time filter, not an access control boundary. There is no mechanism in Supermemory to enforce that user A cannot read user B's data.
+3. **Admin visibility**: The platform administrator (who controls the `SUPERMEMORY_API_KEY`) has unrestricted access to all stored memories. This violates the requirement that admins should not be able to view user memories.
+4. **No per-user API keys**: Supermemory does not support per-user workspaces or API keys in the current integration.
+
+**Recommendation**: **Deprecate Supermemory for user-facing memory storage.** It can remain as an optional research tool (web search results caching) where the stored data is publicly available information, but personal agent memories (soul, preferences, knowledge, journal) must not be stored there. Rely on Google Drive for user-owned memory files.
+
+### Google Drive Memory — Current State
+
+**Architecture**: Each user authenticates with their own Google OAuth tokens (stored encrypted in `tool_configs`). The `lib/integrations/google-drive.ts` module creates a per-agent folder structure:
+```
+Volition/
+  Agent - {name}/
+    soul.md          — Agent personality, identity
+    preferences.md   — User preferences the agent learns
+    knowledge.md     — Accumulated knowledge
+    journal.md       — Ongoing activity log
+```
+
+**Security strengths**:
+1. **Per-user OAuth isolation**: Each user's Drive files are accessed via their own OAuth token. No admin API key. No cross-user visibility.
+2. **`drive.file` scope**: Volition can only access files it created. It cannot read the user's other Drive files.
+3. **User owns the data**: Files are in the user's own Google Drive. They can view, edit, or delete them outside of Volition. They survive account deletion.
+
+**Current gaps**:
+1. **`withMemoryContext()` is defined but never called**: The function in `lib/ai/prompts.ts` is designed to inject `soul.md` and `preferences.md` into the system prompt, but it is NOT invoked in `agent-workflow.ts`. The workflow calls `withHITLGuidelines()` and `withSkills()` but skips memory context.
+2. **No auto-injection of memory files**: Agents must explicitly call the `readMemory` tool to access soul.md, preferences.md, etc. They do not automatically "remember" their identity or user preferences.
+3. **No embedding-based retrieval**: Google Drive files are accessed by exact filename only. There is no semantic/vector search over memory contents. If an agent has accumulated 50 pages of knowledge.md, there is no way to retrieve only the relevant sections for the current task.
+4. **No memory summarization or compaction**: Files grow indefinitely. No mechanism to summarize old journal entries or compact knowledge.md.
+
+### Comparison with OpenClaw's Memory System
+
+| Feature | OpenClaw | Volition (Current) | Gap |
+|---------|----------|-------------------|-----|
+| **Memory file auto-loading** | Personality + memory files loaded into context automatically at each turn | Agents must explicitly call `readMemory` tool — files are NOT auto-loaded | Critical gap — agents have no persistent identity |
+| **User-owned storage** | Local filesystem | Google Drive (user's account) | Parity — both give users ownership |
+| **File structure** | soul.md, memories.md, etc. in agent directory | soul.md, preferences.md, knowledge.md, journal.md in Drive folder | Parity |
+| **Semantic retrieval** | No (file-based, full load) | No (file-based, full load) | Parity — neither uses embeddings |
+| **Admin visibility** | Admin has filesystem access (local deployment) | Admin has NO access (user's own Drive) | Volition is better for multi-user |
+| **Cross-agent memory** | Shared filesystem possible | Per-agent Drive folders, no sharing | Acceptable difference |
+
+### Recommended Actions
+
+1. **Wire up `withMemoryContext()`**: In `agent-workflow.ts`, call `readMemoryFile()` for `soul.md` and `preferences.md` at workflow start, then pass them to `withMemoryContext()`. This gives agents persistent identity without requiring an explicit tool call each time. This is the highest-priority memory fix — without it, agents "forget" who they are between workflow runs.
+
+2. **Deprecate Supermemory for personal memory**: Remove Supermemory from the `storeMemory`/`searchMemory` tools used for personal agent context. Keep it only as a research cache for web content (which is public data). Update the settings page to clarify this distinction.
+
+3. **Add memory file size management**: Implement a `compactMemory` step that summarizes journal.md when it exceeds a threshold (e.g., 10K characters). Prevents context window overflow when loading memory files.
+
+4. **Future: Embedding-based retrieval**: For knowledge.md (which can grow large), consider chunking and embedding for contextual retrieval. This is not urgent — OpenClaw also does full-file loading — but will become necessary as agents accumulate knowledge over weeks/months.
+
+---
+
+## Staging Testing Checklist
+
+### Authentication & Onboarding
+- [ ] New user signs in with Google OAuth → redirected to onboarding
+- [ ] User completes onboarding (enters OpenAI API key) → redirected to dashboard
+- [ ] User skips onboarding → redirected to dashboard
+- [ ] Second sign-in → goes directly to dashboard (no onboarding)
+- [ ] Invalid/expired session → redirected to login
+
+### Multi-User Data Isolation
+- [ ] User A creates an agent → User B cannot see it
+- [ ] User A's activities do not appear in User B's feed
+- [ ] User A's metrics (active tasks, pending, memories) reflect only their data
+- [ ] SSE streams (activities, metrics) deliver only the authenticated user's data
+- [ ] User A cannot access User B's agent by guessing the ID (returns 404)
+- [ ] User A cannot approve/reject User B's activities
+- [ ] Memory search requires agentId and only returns results for user's own agents
+- [ ] Settings page shows only the authenticated user's API keys
+- [ ] No pre-existing unowned data (user_id IS NULL) appears for any user
+
+### Agent Lifecycle
+- [ ] Create agent → appears as Disabled
+- [ ] Enable agent → welcome workflow fires, agent asks what user wants
+- [ ] Chat with enabled agent → chat workflow triggers
+- [ ] Chat with disabled agent → message stored, no workflow
+- [ ] Heartbeat fires for enabled agent with schedule
+- [ ] Heartbeat does NOT fire for disabled agent
+- [ ] Disable agent mid-workflow → workflow exits gracefully
+- [ ] Re-enable agent → new welcome workflow fires
+
+### Security Regression Tests
+- [ ] Unauthenticated request to any protected API route → 401
+- [ ] Authenticated request to another user's agent → 404 (not 403, to avoid leaking existence)
+- [ ] Authenticated request to another user's activity → 404
+- [ ] Telegram webhook (unauthenticated by design) → works correctly
+- [ ] Scheduler tick (unauthenticated by design) → works correctly
+- [ ] Twilio webhooks (unauthenticated by design) → works correctly
 
 ---
 
@@ -257,6 +422,38 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 - `db/migrations/014_agent_model.sql` — Model columns migration
 - `docs/SETUP.md` — Detailed setup and deployment guide
 - `docs/READINESS_REVIEW.md` — This file
+
+### Modified files (staging deployment & security hardening):
+- `scripts/setup-db.ts` — dotenv loading, Neon API fix, multi-statement splitting, comment stripping
+- `app/login/page.tsx` — NextAuth sign-in method fix, callbackUrl fix
+- `lib/auth.ts` — Added `requireAgentOwnership()`, `requireActivityOwnership()`
+- `app/api/agents/route.ts` — Removed `OR user_id IS NULL` fallback
+- `app/api/agents/[id]/route.ts` — Added `requireAgentOwnership` to GET/PATCH/DELETE
+- `app/api/agents/[id]/start/route.ts` — Added `requireAgentOwnership`
+- `app/api/agents/[id]/stop/route.ts` — Added `requireAgentOwnership`
+- `app/api/agents/[id]/chat/route.ts` — Added `requireAgentOwnership`
+- `app/api/agents/[id]/analytics/route.ts` — Added `requireAgentOwnership`
+- `app/api/agents/[id]/status/route.ts` — Added `requireAgentOwnership` to GET
+- `app/api/agents/[id]/schedule/route.ts` — Upgraded to `requireAgentOwnership`
+- `app/api/activities/route.ts` — User-scoped queries via agent join
+- `app/api/activities/stream/route.ts` — User-scoped SSE stream
+- `app/api/activities/[id]/route.ts` — Added `requireActivityOwnership`
+- `app/api/activities/[id]/approve/route.ts` — Added `requireActivityOwnership`
+- `app/api/activities/[id]/reject/route.ts` — Added `requireActivityOwnership`
+- `app/api/activities/[id]/modify/route.ts` — Added `requireActivityOwnership`
+- `app/api/metrics/key/route.ts` — All 7 queries scoped to user's agents
+- `app/api/metrics/stream/route.ts` — SSE stream scoped to user's agents
+- `app/api/calls/route.ts` — `requireAgentOwnership` for POST, user-scoped GET
+- `app/api/calls/[id]/summary/route.ts` — User-scoped call lookup
+- `app/api/memories/search/route.ts` — `requireAgentOwnership`, requires agentId param
+- `app/api/memories/store/route.ts` — `requireAgentOwnership`
+- `app/api/browser/task/route.ts` — Added `requireUserId`
+- `app/api/research/sessions/start/route.ts` — Added `requireAgentOwnership`
+- `app/api/research/sessions/[id]/append/route.ts` — Added `requireActivityOwnership`
+- `app/api/research/sessions/[id]/complete/route.ts` — Added `requireActivityOwnership`
+- `app/api/skills/route.ts` — Upgraded to `requireAgentOwnership` for POST
+- `app/api/telegram/send/route.ts` — Added `requireUserId`
+- `app/api/telegram/setup/route.ts` — Added `requireUserId`
 
 ### Modified files (lifecycle redesign):
 - `lib/db.ts` — Added `enabled: boolean` to Agent interface

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Activity } from '@/lib/db';
+import { requireActivityOwnership } from '@/lib/auth';
 import { userInputHook, phoneCallHook, emailApprovalHook, activityApprovalHook } from '@/lib/ai/workflows/hooks';
 
 interface RouteContext {
@@ -9,7 +10,7 @@ interface RouteContext {
 
 /**
  * POST /api/activities/:id/reject
- * Reject a pending activity and resume workflow with rejection
+ * Reject a pending activity and resume workflow with rejection (owned by authenticated user)
  */
 export async function POST(
   request: NextRequest,
@@ -17,7 +18,8 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
-    
+    await requireActivityOwnership(id);
+
     const result = await sql<Activity[]>`
       UPDATE activities
       SET status = 'rejected'

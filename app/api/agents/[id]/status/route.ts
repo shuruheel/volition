@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
+import { requireAgentOwnership } from '@/lib/auth';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -25,8 +26,8 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    
-    // Get agent status from database
+    await requireAgentOwnership(id);
+
     const statusRows = await sql<AgentStatus[]>`
       SELECT 
         agent_id as "agentId",

@@ -102,6 +102,36 @@ export async function requireUserId(): Promise<string> {
   return userId;
 }
 
+/**
+ * Verify that the authenticated user owns the given agent.
+ * Returns the userId. Throws if not authenticated or not the owner.
+ */
+export async function requireAgentOwnership(agentId: string): Promise<string> {
+  const userId = await requireUserId();
+  const rows = await sql`SELECT id FROM agents WHERE id = ${agentId} AND user_id = ${userId}`;
+  if (rows.length === 0) {
+    throw new Error('Agent not found');
+  }
+  return userId;
+}
+
+/**
+ * Verify that the authenticated user owns the agent associated with an activity.
+ * Returns the userId. Throws if not authenticated or not the owner.
+ */
+export async function requireActivityOwnership(activityId: string): Promise<string> {
+  const userId = await requireUserId();
+  const rows = await sql`
+    SELECT a.id FROM activities a
+    JOIN agents ag ON ag.id = a.agent_id
+    WHERE a.id = ${activityId} AND ag.user_id = ${userId}
+  `;
+  if (rows.length === 0) {
+    throw new Error('Activity not found');
+  }
+  return userId;
+}
+
 // ── Legacy type exports (used by components) ──
 
 export type AgentTool =

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { requireActivityOwnership } from '@/lib/auth'
 import { generateSummary } from '@/lib/ai/utils'
 
 interface RouteContext {
@@ -14,6 +15,7 @@ interface RouteContext {
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
+    await requireActivityOwnership(id)
     const body = await request.json().catch(() => ({}))
     const providedSummary = typeof body.summary === 'string' ? body.summary : undefined
 

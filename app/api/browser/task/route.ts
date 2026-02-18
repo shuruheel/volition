@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireUserId } from '@/lib/auth';
 import { BrowserUseClient } from 'browser-use-sdk';
 
 // Initialize Browser-Use client
@@ -12,9 +13,10 @@ const browserClient = new BrowserUseClient({
  */
 export async function POST(request: NextRequest) {
   try {
+    await requireUserId();
     const body = await request.json();
     const { task, maxSteps = 10, wait = false, timeoutMs = 120000, allowedDomains } = body;
-    
+
     if (!task) {
       return NextResponse.json(
         { error: 'task is required' },
@@ -85,9 +87,10 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
+    await requireUserId();
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
-    
+
     if (!id) {
       return NextResponse.json(
         { error: 'id parameter is required' },

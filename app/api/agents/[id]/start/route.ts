@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
+import { requireAgentOwnership } from '@/lib/auth';
 import { updateAgentStatus } from '@/lib/agent-status';
 import { start } from 'workflow/api';
 import { agentTaskWorkflow } from '@/lib/ai/workflows/agent-workflow';
@@ -20,19 +21,9 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
+    await requireAgentOwnership(id);
 
-    // Fetch agent
-    const agents = await sql<Agent[]>`
-      SELECT * FROM agents WHERE id = ${id}
-    `;
-
-    if (agents.length === 0) {
-      return NextResponse.json(
-        { error: 'Agent not found' },
-        { status: 404 }
-      );
-    }
-
+    const agents = await sql<Agent[]>`SELECT * FROM agents WHERE id = ${id}`;
     const agent = agents[0];
 
     // If already enabled and active, skip (idempotency)
@@ -45,9 +36,7 @@ export async function POST(
 
     // Set enabled = true
     await sql`
-      UPDATE agents
-      SET enabled = true, updated_at = NOW()
-      WHERE id = ${id}
+      UPDATE agents SET enabled = true, updated_at = NOW() WHERE id = ${id}
     `;
 
     // Ensure a default heartbeat schedule exists (60-min interval)
@@ -56,13 +45,11 @@ export async function POST(
     `;
 
     if (existingSchedules.length === 0) {
-      // Auto-create a default 60-min heartbeat
       await sql`
         INSERT INTO agent_schedules (agent_id, schedule_type, interval_minutes, enabled, next_run_at)
         VALUES (${id}, 'heartbeat', 60, true, NOW() + INTERVAL '60 minutes')
       `;
     } else if (!existingSchedules[0].enabled) {
-      // Re-enable existing schedule
       await sql`
         UPDATE agent_schedules
         SET enabled = true, next_run_at = NOW() + INTERVAL '60 minutes'
@@ -70,7 +57,6 @@ export async function POST(
       `;
     }
 
-    // Initialize agent status
     await updateAgentStatus(id, {
       status: 'active',
       currentStep: 0,
@@ -78,7 +64,6 @@ export async function POST(
       currentActivity: 'Starting welcome workflow...',
     });
 
-    // Launch welcome workflow (5 steps max)
     const welcomePrompt = `You have just been enabled by the user. Introduce yourself briefly based on your system prompt, then use the askUser tool to ask the user what they would like you to work on. Do NOT start any research or tasks until the user responds. Keep your introduction concise and friendly.`;
 
     console.log(`[Agent Enable] Launching welcome workflow for agent ${id}`);
@@ -93,11 +78,11 @@ export async function POST(
       runId: run.runId,
       workflowInvoked: true,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'Agent not found' || error?.message === 'Authentication required') {
+      return NextResponse.json({ error: error.message }, { status: error.message === 'Authentication required' ? 401 : 404 });
+    }
     console.error('Failed to enable agent:', error);
-    return NextResponse.json(
-      { error: 'Failed to enable agent' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to enable agent' }, { status: 500 });
   }
 }

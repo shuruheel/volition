@@ -12,7 +12,7 @@ export async function GET() {
     const userId = await requireUserId();
     const agents = await sql<Agent[]>`
       SELECT * FROM agents
-      WHERE user_id = ${userId} OR user_id IS NULL
+      WHERE user_id = ${userId}
       ORDER BY created_at DESC
     `;
     

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Memory } from '@/lib/db';
+import { requireAgentOwnership } from '@/lib/auth';
 import Supermemory from 'supermemory'
 
 /**
  * GET /api/memories/search
- * Search memories for an agent
+ * Search memories for an agent (owned by authenticated user)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -14,13 +15,18 @@ export async function GET(request: NextRequest) {
     const kind = searchParams.get('kind');
     const limit = parseInt(searchParams.get('limit') || '20');
     const q = searchParams.get('q') || ''
-    
+
+    if (!agentId) {
+      return NextResponse.json({ error: 'agentId is required' }, { status: 400 });
+    }
+
+    await requireAgentOwnership(agentId);
+
     // Prefer Supermemory search for documents
-    if (process.env.SUPERMEMORY_API_KEY && agentId && (!kind || kind === 'document')) {
+    if (process.env.SUPERMEMORY_API_KEY && (!kind || kind === 'document')) {
       const sm = new Supermemory({ apiKey: process.env.SUPERMEMORY_API_KEY! })
       const results = await sm.search.documents({
         q: q || 'recent research documents',
-        // Use boolean group with key/value matcher
         filters: { AND: [{ key: 'metadata.agentId', value: agentId }] },
         limit,
       })
@@ -35,23 +41,19 @@ export async function GET(request: NextRequest) {
     }
 
     // Fallback: Neon references
-    let query = sql`SELECT * FROM memories WHERE 1=1`;
-    if (agentId) {
-      query = sql`${query} AND agent_id = ${agentId}`;
-    }
+    let query = sql`SELECT * FROM memories WHERE agent_id = ${agentId}`;
     if (kind) {
       query = sql`${query} AND kind = ${kind}`;
     }
     query = sql`${query} ORDER BY created_at DESC LIMIT ${limit}`;
     const memories = await query as unknown as Memory[];
-    
+
     return NextResponse.json(memories);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'Agent not found' || error?.message === 'Authentication required') {
+      return NextResponse.json({ error: error.message }, { status: error.message === 'Authentication required' ? 401 : 404 });
+    }
     console.error('Failed to search memories:', error);
-    return NextResponse.json(
-      { error: 'Failed to search memories' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to search memories' }, { status: 500 });
   }
 }
-

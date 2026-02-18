@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { requireAgentOwnership } from '@/lib/auth'
 
 /**
  * POST /api/research/sessions/start
@@ -15,6 +16,8 @@ export async function POST(request: NextRequest) {
     if (!agentId) {
       return NextResponse.json({ error: 'agent_id is required' }, { status: 400 })
     }
+
+    await requireAgentOwnership(agentId)
 
     const payload = {
       title,

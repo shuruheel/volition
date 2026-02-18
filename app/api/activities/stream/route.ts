@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { sql } from '@/lib/db'
+import { requireUserId } from '@/lib/auth'
 
 type ActivityRow = {
   id: string
@@ -13,6 +14,7 @@ type ActivityRow = {
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
+  const userId = await requireUserId()
   const { searchParams } = new URL(request.url)
   const agentId = searchParams.get('agentId') || undefined
   const typesParam = searchParams.get('types') || ''
@@ -23,50 +25,56 @@ export async function GET(request: NextRequest) {
   const encoder = new TextEncoder()
 
   async function fetchSince(sinceIso: string): Promise<ActivityRow[]> {
-    // Build base
     let rows: ActivityRow[]
     if (agentId && types.length > 0) {
       rows = await sql<ActivityRow[]>`
-        SELECT id, agent_id, type, status, created_at, payload
-        FROM activities
-        WHERE agent_id = ${agentId}
-          AND type = ANY(${types})
-          AND created_at > ${sinceIso}
-        ORDER BY created_at ASC
+        SELECT a.id, a.agent_id, a.type, a.status, a.created_at, a.payload
+        FROM activities a
+        JOIN agents ag ON ag.id = a.agent_id
+        WHERE ag.user_id = ${userId}
+          AND a.agent_id = ${agentId}
+          AND a.type = ANY(${types})
+          AND a.created_at > ${sinceIso}
+        ORDER BY a.created_at ASC
         LIMIT 200
       `
     } else if (agentId) {
       rows = await sql<ActivityRow[]>`
-        SELECT id, agent_id, type, status, created_at, payload
-        FROM activities
-        WHERE agent_id = ${agentId}
-          AND created_at > ${sinceIso}
-        ORDER BY created_at ASC
+        SELECT a.id, a.agent_id, a.type, a.status, a.created_at, a.payload
+        FROM activities a
+        JOIN agents ag ON ag.id = a.agent_id
+        WHERE ag.user_id = ${userId}
+          AND a.agent_id = ${agentId}
+          AND a.created_at > ${sinceIso}
+        ORDER BY a.created_at ASC
         LIMIT 200
       `
     } else if (types.length > 0) {
       rows = await sql<ActivityRow[]>`
-        SELECT id, agent_id, type, status, created_at, payload
-        FROM activities
-        WHERE type = ANY(${types})
-          AND created_at > ${sinceIso}
-        ORDER BY created_at ASC
+        SELECT a.id, a.agent_id, a.type, a.status, a.created_at, a.payload
+        FROM activities a
+        JOIN agents ag ON ag.id = a.agent_id
+        WHERE ag.user_id = ${userId}
+          AND a.type = ANY(${types})
+          AND a.created_at > ${sinceIso}
+        ORDER BY a.created_at ASC
         LIMIT 200
       `
     } else {
       rows = await sql<ActivityRow[]>`
-        SELECT id, agent_id, type, status, created_at, payload
-        FROM activities
-        WHERE created_at > ${sinceIso}
-        ORDER BY created_at ASC
+        SELECT a.id, a.agent_id, a.type, a.status, a.created_at, a.payload
+        FROM activities a
+        JOIN agents ag ON ag.id = a.agent_id
+        WHERE ag.user_id = ${userId}
+          AND a.created_at > ${sinceIso}
+        ORDER BY a.created_at ASC
         LIMIT 200
       `
     }
 
-    // Filter research activities: show if they have chatAck OR if they're completed with a summary
     rows = rows.filter((r) => {
       if (r.type === 'research') {
-        return !!(r.payload && (r.payload as any).chatAck) || 
+        return !!(r.payload && (r.payload as any).chatAck) ||
                (r.status === 'completed' && r.payload && (r.payload as any).summary);
       }
       return true;
@@ -76,10 +84,8 @@ export async function GET(request: NextRequest) {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      // Send initial heartbeat so the client connects immediately
       controller.enqueue(encoder.encode(`: connected\n\n`))
 
-      // Initial snapshot (sends nothing unless since is very recent)
       const first = await fetchSince(since)
       if (first.length > 0) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ items: first })}\n\n`))
@@ -93,7 +99,6 @@ export async function GET(request: NextRequest) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ items: updates })}\n\n`))
             since = updates[updates.length - 1].created_at
           } else {
-            // heartbeat to keep the connection alive
             controller.enqueue(encoder.encode(`: keep-alive\n\n`))
           }
         } catch (e) {
@@ -101,9 +106,8 @@ export async function GET(request: NextRequest) {
         }
       }, intervalMs)
 
-      // Cleanup on close
       const close = () => clearInterval(timer)
-      // @ts-ignore - not all runtimes expose this
+      // @ts-ignore
       request.signal?.addEventListener('abort', close)
     },
     cancel() {
@@ -120,5 +124,3 @@ export async function GET(request: NextRequest) {
     },
   })
 }
-
-

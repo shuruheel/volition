@@ -1,100 +1,97 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
+import { requireUserId } from '@/lib/auth';
 
 /**
  * GET /api/metrics/key
- * Get key metrics for dashboard
- * Metrics: Total Spend, Active Tasks, Pending Approvals, Memories Added, Actions Done, Emails Sent, Calls Made
+ * Get key metrics for dashboard, scoped to the authenticated user
  */
 export async function GET(request: NextRequest) {
   try {
+    const userId = await requireUserId();
     const { searchParams } = new URL(request.url);
     const agentId = searchParams.get('agentId');
-    
-    // Define 24 hours ago
+
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    
-    // Build agent filter
-    const agentFilter = agentId ? sql`AND agent_id = ${agentId}` : sql``;
-    
-    // Total Spend (sum of API costs from activities or usage table)
-    // For now, mock this as we don't have usage tracking yet
+
     const totalSpend = 0; // TODO: Implement usage tracking
-    
-    // Active Tasks (agents with status='active')
-    const activeTasksResult = await sql`
-      SELECT COUNT(*) as count
-      FROM agents
-      WHERE status = 'active'
-      ${agentId ? sql`AND id = ${agentId}` : sql``}
-    `;
+
+    // Active Tasks (user's agents with status='active')
+    const activeTasksResult = agentId
+      ? await sql`SELECT COUNT(*) as count FROM agents WHERE status = 'active' AND user_id = ${userId} AND id = ${agentId}`
+      : await sql`SELECT COUNT(*) as count FROM agents WHERE status = 'active' AND user_id = ${userId}`;
     const activeTasks = parseInt(activeTasksResult[0].count as string);
-    
-    // Pending Approvals
-    const pendingApprovalsResult = await sql`
-      SELECT COUNT(*) as count
-      FROM activities
-      WHERE status = 'pending'
-      ${agentFilter}
-    `;
+
+    // Pending Approvals (scoped through agents)
+    const pendingApprovalsResult = agentId
+      ? await sql`
+          SELECT COUNT(*) as count FROM activities a
+          JOIN agents ag ON ag.id = a.agent_id
+          WHERE a.status = 'pending' AND ag.user_id = ${userId} AND a.agent_id = ${agentId}
+        `
+      : await sql`
+          SELECT COUNT(*) as count FROM activities a
+          JOIN agents ag ON ag.id = a.agent_id
+          WHERE a.status = 'pending' AND ag.user_id = ${userId}
+        `;
     const pendingApprovals = parseInt(pendingApprovalsResult[0].count as string);
-    
-    // Memories Added (last 24h)
-    const memoriesResult = await sql`
-      SELECT COUNT(*) as count
-      FROM memories
-      WHERE created_at >= ${oneDayAgo.toISOString()}
-      ${agentFilter}
-    `;
+
+    // Memories Added (last 24h, scoped through agents)
+    const memoriesResult = agentId
+      ? await sql`
+          SELECT COUNT(*) as count FROM memories m
+          JOIN agents ag ON ag.id = m.agent_id
+          WHERE m.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId} AND m.agent_id = ${agentId}
+        `
+      : await sql`
+          SELECT COUNT(*) as count FROM memories m
+          JOIN agents ag ON ag.id = m.agent_id
+          WHERE m.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId}
+        `;
     const memoriesAdded = parseInt(memoriesResult[0].count as string);
-    
-    // Debug logging for memory metrics
-    if (agentId) {
-      const debugMemories = await sql`
-        SELECT id, agent_id, kind, created_at, provider_id
-        FROM memories
-        WHERE agent_id = ${agentId}
-        ORDER BY created_at DESC
-        LIMIT 5
-      `;
-      console.log(`[Metrics] Debug - Found ${memoriesAdded} memories in last 24h for agent ${agentId}`);
-      console.log(`[Metrics] Debug - Recent memories:`, debugMemories.map((m: any) => ({ 
-        id: m.id, 
-        agent_id: m.agent_id, 
-        created_at: m.created_at,
-        kind: m.kind 
-      })));
-    }
-    
+
     // Actions Done (completed activities in last 24h)
-    const actionsResult = await sql`
-      SELECT COUNT(*) as count
-      FROM activities
-      WHERE status = 'completed'
-        AND created_at >= ${oneDayAgo.toISOString()}
-      ${agentFilter}
-    `;
+    const actionsResult = agentId
+      ? await sql`
+          SELECT COUNT(*) as count FROM activities a
+          JOIN agents ag ON ag.id = a.agent_id
+          WHERE a.status = 'completed' AND a.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId} AND a.agent_id = ${agentId}
+        `
+      : await sql`
+          SELECT COUNT(*) as count FROM activities a
+          JOIN agents ag ON ag.id = a.agent_id
+          WHERE a.status = 'completed' AND a.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId}
+        `;
     const actionsDone = parseInt(actionsResult[0].count as string);
-    
+
     // Emails Sent (last 24h)
-    const emailsResult = await sql`
-      SELECT COUNT(*) as count
-      FROM activities
-      WHERE type = 'email_sent'
-        AND created_at >= ${oneDayAgo.toISOString()}
-      ${agentFilter}
-    `;
+    const emailsResult = agentId
+      ? await sql`
+          SELECT COUNT(*) as count FROM activities a
+          JOIN agents ag ON ag.id = a.agent_id
+          WHERE a.type = 'email_sent' AND a.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId} AND a.agent_id = ${agentId}
+        `
+      : await sql`
+          SELECT COUNT(*) as count FROM activities a
+          JOIN agents ag ON ag.id = a.agent_id
+          WHERE a.type = 'email_sent' AND a.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId}
+        `;
     const emailsSent = parseInt(emailsResult[0].count as string);
-    
-    // Calls Made (last 24h)
-    const callsResult = await sql`
-      SELECT COUNT(*) as count
-      FROM calls
-      WHERE created_at >= ${oneDayAgo.toISOString()}
-      ${agentFilter}
-    `;
+
+    // Calls Made (last 24h, scoped through agents)
+    const callsResult = agentId
+      ? await sql`
+          SELECT COUNT(*) as count FROM calls c
+          JOIN agents ag ON ag.id = c.agent_id
+          WHERE c.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId} AND c.agent_id = ${agentId}
+        `
+      : await sql`
+          SELECT COUNT(*) as count FROM calls c
+          JOIN agents ag ON ag.id = c.agent_id
+          WHERE c.created_at >= ${oneDayAgo.toISOString()} AND ag.user_id = ${userId}
+        `;
     const callsMade = parseInt(callsResult[0].count as string);
-    
+
     return NextResponse.json({
       totalSpend,
       activeTasks,
@@ -106,7 +103,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('Failed to fetch key metrics:', error);
-    // Return zero metrics instead of error to prevent UI crash
     return NextResponse.json({
       totalSpend: 0,
       activeTasks: 0,
@@ -118,4 +114,3 @@ export async function GET(request: NextRequest) {
     });
   }
 }
-

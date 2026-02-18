@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { requireActivityOwnership } from '@/lib/auth'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -13,6 +14,7 @@ interface RouteContext {
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
+    await requireActivityOwnership(id)
     const body = await request.json()
 
     const { query, links = [], notes = [] } = body as {

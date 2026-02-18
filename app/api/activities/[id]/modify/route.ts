@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Activity } from '@/lib/db';
+import { requireActivityOwnership } from '@/lib/auth';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -8,7 +9,7 @@ interface RouteContext {
 
 /**
  * POST /api/activities/:id/modify
- * Modify an activity's payload
+ * Modify an activity's payload (owned by authenticated user)
  */
 export async function POST(
   request: NextRequest,
@@ -16,6 +17,7 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
+    await requireActivityOwnership(id);
     const body = await request.json();
     const { payload } = body;
     
