@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserId } from '@/lib/auth';
-import { sendTelegramMessage } from '@/lib/integrations/telegram';
+import { sendTelegramMessage, resolveTelegramToken } from '@/lib/integrations/telegram';
 
 /**
  * POST /api/telegram/send
@@ -8,7 +8,7 @@ import { sendTelegramMessage } from '@/lib/integrations/telegram';
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireUserId();
+    const userId = await requireUserId();
     const body = await request.json();
     const { chatId, text, parseMode } = body;
 
@@ -19,7 +19,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await sendTelegramMessage({ chatId, text, parseMode });
+    const botToken = await resolveTelegramToken(userId);
+    const result = await sendTelegramMessage({ chatId, text, parseMode, botToken });
     return NextResponse.json(result);
   } catch (error) {
     console.error('Failed to send Telegram message:', error);

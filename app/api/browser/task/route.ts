@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserId } from '@/lib/auth';
 import { BrowserUseClient } from 'browser-use-sdk';
-
-// Initialize Browser-Use client
-const browserClient = new BrowserUseClient({
-  apiKey: process.env.BROWSER_USE_API_KEY,
-});
+import { resolveBrowserUseKey } from '@/lib/integrations/browser-use';
 
 /**
  * POST /api/browser/task
@@ -13,7 +9,7 @@ const browserClient = new BrowserUseClient({
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireUserId();
+    const userId = await requireUserId();
     const body = await request.json();
     const { task, maxSteps = 10, wait = false, timeoutMs = 120000, allowedDomains } = body;
 
@@ -23,16 +19,18 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    
-    if (!process.env.BROWSER_USE_API_KEY) {
+
+    const apiKey = await resolveBrowserUseKey(userId);
+    if (!apiKey) {
       return NextResponse.json(
         { error: 'BROWSER_USE_API_KEY not configured' },
         { status: 503 }
       );
     }
-    
+
+    const browserClient = new BrowserUseClient({ apiKey });
     console.log('Creating browser task:', { task, maxSteps });
-    
+
     // Create the task
     const browserTask = await browserClient.tasks.createTask({
       task,
@@ -87,7 +85,7 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireUserId();
+    const userId = await requireUserId();
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
@@ -97,8 +95,9 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-    
-    if (!process.env.BROWSER_USE_API_KEY) {
+
+    const apiKey = await resolveBrowserUseKey(userId);
+    if (!apiKey) {
       return NextResponse.json(
         { error: 'BROWSER_USE_API_KEY not configured' },
         { status: 503 }

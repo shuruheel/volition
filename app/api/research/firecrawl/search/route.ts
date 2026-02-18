@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { searchFirecrawl } from '@/lib/integrations/firecrawl';
+import { searchFirecrawl, resolveFirecrawlKey } from '@/lib/integrations/firecrawl';
 import { rateLimit } from '@/lib/api/rate-limit';
+import { getUserId } from '@/lib/auth';
 
 const InputSchema = z.object({
   query: z.string().min(2).max(400),
@@ -30,7 +31,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!process.env.FIRECRAWL_API_KEY) {
+    const userId = await getUserId();
+    const apiKey = await resolveFirecrawlKey(userId);
+    if (!apiKey) {
       return NextResponse.json(
         { error: 'FIRECRAWL_API_KEY not configured' },
         { status: 503 }
@@ -41,7 +44,7 @@ export async function POST(request: NextRequest) {
     if (query.length > 400) {
       return NextResponse.json({ error: 'Query too long' }, { status: 400 });
     }
-    const data = await searchFirecrawl({ query, limit, sources, categories });
+    const data = await searchFirecrawl({ query, limit, sources, categories, apiKey });
     return NextResponse.json(data);
   } catch (error: any) {
     const status = (error && typeof error.status === 'number') ? error.status : 500;

@@ -73,10 +73,10 @@ export async function resolveProviderConfig(
   if (userId) {
     try {
       const { sql } = await import('@/lib/db');
-      const { decryptValue } = await import('@/lib/crypto');
-      const configs = await sql`SELECT config FROM tool_configs WHERE user_id = ${userId} AND tool = ${provider}`;
-      if (configs.length > 0 && configs[0].config) {
-        const decrypted = JSON.parse(await decryptValue(configs[0].config));
+      const { decrypt } = await import('@/lib/crypto');
+      const configs = await sql`SELECT data_encrypted FROM tool_configs WHERE user_id = ${userId} AND tool = ${provider}`;
+      if (configs.length > 0 && configs[0].data_encrypted) {
+        const decrypted = JSON.parse(decrypt(configs[0].data_encrypted));
         apiKey = decrypted.apiKey;
       }
     } catch {

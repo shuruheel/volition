@@ -9,7 +9,7 @@
  * See docs/workflow-vs-legacy-tools.md for detailed explanation.
  */
 
-import { withHITLGuidelines, withSkills, type TriggerType } from '../prompts';
+import { withHITLGuidelines, withSkills, withMemoryContext, type TriggerType } from '../prompts';
 import {
   fetchAgentStep,
   updateAgentDBStatusStep,
@@ -20,6 +20,7 @@ import {
   executeLLMDecisionStep,
   autoCompleteResearchSessionStep,
   checkAgentEnabledStep,
+  loadMemoryContextStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
@@ -48,8 +49,14 @@ export async function agentTaskWorkflow(
   // Ensure all context data is fully serializable
   const { history, researchContext, memoryContext, pending } = JSON.parse(JSON.stringify(contextRaw));
 
+  // Load memory files (soul.md, preferences.md) from Google Drive
+  const { soulMd, preferencesMd } = await loadMemoryContextStep(agent.user_id || null, agentId);
+
   // Build system prompt based on trigger type
   let systemPrompt = withHITLGuidelines(agent.prompt, triggerType);
+
+  // Inject memory context (personality + preferences) into system prompt
+  systemPrompt = withMemoryContext(systemPrompt, soulMd, preferencesMd);
 
   // Inject enabled skill instructions into system prompt
   if (Array.isArray(agent.skills) && agent.skills.length > 0) {

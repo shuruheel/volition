@@ -1,10 +1,34 @@
 import { Bot } from 'grammy';
 import { sql } from '@/lib/db';
+import { decrypt } from '@/lib/crypto';
 
 let _bot: Bot | null = null;
 
 /**
- * Get or create the singleton Telegram Bot instance
+ * Resolve the Telegram bot token: per-user tool_configs first, env var fallback.
+ */
+export async function resolveTelegramToken(userId?: string | null): Promise<string | undefined> {
+  if (userId) {
+    try {
+      const configs = await sql`
+        SELECT data_encrypted FROM tool_configs
+        WHERE user_id = ${userId} AND tool = 'telegram'
+      `;
+      if (configs.length > 0 && configs[0].data_encrypted) {
+        const data = JSON.parse(decrypt(configs[0].data_encrypted));
+        if (data.botToken) {
+          return data.botToken;
+        }
+      }
+    } catch {
+      // Fall through to env var
+    }
+  }
+  return process.env.TELEGRAM_BOT_TOKEN;
+}
+
+/**
+ * Get or create the singleton Telegram Bot instance (for webhooks / platform bot)
  */
 export function getTelegramBot(): Bot {
   if (_bot) return _bot;
@@ -19,14 +43,17 @@ export function getTelegramBot(): Bot {
 }
 
 /**
- * Send a message to a Telegram chat
+ * Send a message to a Telegram chat.
+ * If botToken is provided, creates a one-off Bot instance for that token.
+ * Otherwise uses the platform singleton bot.
  */
 export async function sendTelegramMessage(params: {
   chatId: number | string;
   text: string;
   parseMode?: 'HTML' | 'MarkdownV2';
+  botToken?: string;
 }) {
-  const bot = getTelegramBot();
+  const bot = params.botToken ? new Bot(params.botToken) : getTelegramBot();
   const result = await bot.api.sendMessage(params.chatId, params.text, {
     parse_mode: params.parseMode,
   });

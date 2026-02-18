@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Memory } from '@/lib/db';
 import { requireAgentOwnership } from '@/lib/auth';
-import Supermemory from 'supermemory'
+import Supermemory from 'supermemory';
+import { resolveSupermemoryKey } from '@/lib/integrations/supermemory';
 
 /**
  * GET /api/memories/search
@@ -20,11 +21,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'agentId is required' }, { status: 400 });
     }
 
-    await requireAgentOwnership(agentId);
+    const userId = await requireAgentOwnership(agentId);
 
     // Prefer Supermemory search for documents
-    if (process.env.SUPERMEMORY_API_KEY && (!kind || kind === 'document')) {
-      const sm = new Supermemory({ apiKey: process.env.SUPERMEMORY_API_KEY! })
+    const smApiKey = await resolveSupermemoryKey(userId);
+    if (smApiKey && (!kind || kind === 'document')) {
+      const sm = new Supermemory({ apiKey: smApiKey })
       const results = await sm.search.documents({
         q: q || 'recent research documents',
         filters: { AND: [{ key: 'metadata.agentId', value: agentId }] },

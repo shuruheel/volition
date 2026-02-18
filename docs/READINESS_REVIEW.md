@@ -1,6 +1,6 @@
 # Volition v2 Readiness Review
 
-Last updated: 2026-02-17
+Last updated: 2026-02-17 (v3)
 
 ---
 
@@ -188,12 +188,12 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 | Onboarding flow | Ready | API key encryption works, redirect fixed |
 | Agent CRUD | Ready | Scoped to user via `requireAgentOwnership` |
 | Model selection (OpenAI/Anthropic) | Ready | Per-agent provider + model |
-| **Agent enable/disable lifecycle** | **Ready** | **`enabled` column, welcome/chat/heartbeat trigger types** |
-| **Chat-triggered workflows** | **Ready** | **`/api/agents/[id]/chat` with atomic status claim** |
-| **Trigger-aware prompts** | **Ready** | **welcome/chat/heartbeat/manual prompt variants** |
-| **Graceful mid-workflow disable** | **Ready** | **`checkAgentEnabledStep` in loop** |
-| **Multi-user data isolation** | **Ready** | **26 routes secured with ownership checks** |
-| **API route authentication** | **Ready** | **All routes use `requireUserId`, `requireAgentOwnership`, or `requireActivityOwnership`** |
+| Agent enable/disable lifecycle | Ready | `enabled` column, welcome/chat/heartbeat trigger types |
+| Chat-triggered workflows | Ready | `/api/agents/[id]/chat` with atomic status claim |
+| Trigger-aware prompts | Ready | welcome/chat/heartbeat/manual prompt variants |
+| Graceful mid-workflow disable | Ready | `checkAgentEnabledStep` in loop |
+| Multi-user data isolation | **Needs Fix** | **2 routes missing ownership checks (see below)** |
+| API route authentication | **Needs Fix** | **`POST /api/activities` and `/api/agents/:id/memory` lack `requireAgentOwnership`** |
 | Workflow execution | Ready | Durable steps, trigger-type-aware step limits |
 | Research pipeline | Ready | Plan queries -> Firecrawl -> Supermemory (public data only) |
 | HITL approval | Ready | Email and calendar require approval |
@@ -204,6 +204,9 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 | Agent analytics | Ready | Scoped to user's agents |
 | Settings encryption | Ready | AES-GCM per-user, APP_ENCRYPTION_KEY set for all Vercel environments |
 | Database migrations | Ready | Runner fixed (dotenv, Neon API, multi-statement, comments) |
+| **Per-user LLM keys** | **Ready** | **`resolveProviderConfig()` fixed — reads `data_encrypted` column, uses `decrypt()`** |
+| **Per-user Supermemory keys** | **Ready** | **`resolveSupermemoryKey()` reads per-user key from `tool_configs`, falls back to env var** |
+| **Memory context auto-injection** | **Ready** | **`loadMemoryContextStep()` loads soul.md/preferences.md, `withMemoryContext()` injects into system prompt** |
 
 ### Needs Integration Testing
 
@@ -224,12 +227,24 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 
 ### Known Limitations
 
+#### Security Issues (Must Fix Before Production)
+
+| Issue | Severity | Details |
+|-------|----------|---------|
+| **`POST /api/activities` missing auth** | **High** | No `requireAgentOwnership()` call. Any user can create activities for any agent. |
+| **`/api/agents/:id/memory` missing ownership check** | **Medium** | Uses `requireUserId()` but not `requireAgentOwnership()`. Data leakage risk is mitigated by Google Drive OAuth scoping (each user's token accesses their own Drive), but user A could create spurious files for agent B in their own Drive. Must add `requireAgentOwnership()`. |
+| **Telegram webhook allows hijacking** | **Medium** | `/start <agentId>` deep-link lets any Telegram user link to any agent without ownership validation. Could misdirect messages. |
+
+#### Per-User API Key Gaps — RESOLVED (v3)
+
+All integration points now resolve per-user keys from `tool_configs`. See the Per-User API Key Resolution Audit section for the full matrix.
+
+#### Other Limitations
+
 | Issue | Impact | Workaround |
 |-------|--------|-----------|
-| **`withMemoryContext()` not wired up** | **Agents do not auto-load soul.md/preferences.md — they "forget" identity between runs** | **Agents can manually call `readMemory` tool, but this wastes a step** |
-| **Supermemory uses shared global API key** | **Admin can see all users' stored memories; no per-user isolation** | **Deprecate for personal memory; use only for public research cache** |
-| **No embedding-based memory retrieval** | **Large knowledge.md files loaded in full or not at all** | **Acceptable for now (OpenClaw also does full-file load)** |
-| **No memory file compaction** | **journal.md and knowledge.md grow indefinitely** | **Manual editing in Google Drive** |
+| No embedding-based memory retrieval | Large knowledge.md files loaded in full or not at all | Acceptable for now (OpenClaw also does full-file load) |
+| No memory file compaction | journal.md and knowledge.md grow indefinitely | Manual editing in Google Drive |
 | Twilio WebSocket stream is a stub | Voice call streaming not functional | Outbound calls work, just no real-time audio streaming |
 | Total Spend metric is mocked at $0 | No cost tracking | Track via provider dashboards |
 | No global navigation component | Users must know page URLs or use dashboard links | Dashboard has links to Templates, Skills; each page has back-to-dashboard button |
@@ -238,6 +253,24 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 | 10-step chat workflow limit | Complex tasks requested via chat may hit the step limit | User can re-message to continue, or heartbeat picks up |
 
 ### Fixes Applied
+
+#### v3 (Per-User Keys & Memory Context)
+
+**Per-user key resolution for LLM providers and Supermemory:**
+- **Fixed `resolveProviderConfig()` bug**: `lib/ai/providers/index.ts` referenced non-existent `decryptValue` function and wrong column `config`. Fixed to use `decrypt()` from `lib/crypto.ts` and correct column `data_encrypted`. Per-user LLM API keys now actually work.
+- **Added `resolveSupermemoryKey(userId)`**: `lib/integrations/supermemory.ts` now resolves per-user encrypted API keys from `tool_configs` before falling back to `process.env.SUPERMEMORY_API_KEY`. Eliminates shared-key admin visibility concern for users who configure their own key.
+- **Updated `storeMarkdown()` and `searchMemories()`**: Both functions accept `userId` and pass it to `resolveSupermemoryKey()`. All workflow call sites (`planResearchQueriesStep`, `executeResearchStep`, tool handlers) and the `/api/memories/search` route pass `userId` through.
+
+**Memory context auto-injection:**
+- **Added `loadMemoryContextStep()`**: New durable workflow step in `steps.ts` that loads `soul.md` and `preferences.md` from Google Drive via `readMemoryFile()`. Gracefully returns nulls if Drive is not configured or files don't exist.
+- **Wired up `withMemoryContext()`**: `agent-workflow.ts` now calls `loadMemoryContextStep()` after `getAgentContextStep()` and injects the results via `withMemoryContext()` into the system prompt. Prompt order: base -> HITL guidelines -> memory context -> skills. Agents now retain personality and learned preferences across workflow runs.
+
+**Per-user key resolution for all remaining integrations:**
+- **Added `resolveFirecrawlKey(userId)`**: `lib/integrations/firecrawl.ts` resolves per-user keys. Updated `searchFirecrawl()`, `scrapeFirecrawl()`, and `searchAndScrape()` to accept optional `apiKey`. Updated `executeResearchStep()` and both Firecrawl API routes to resolve and pass per-user key.
+- **Added `resolveBrowserUseKey(userId)`**: New `lib/integrations/browser-use.ts` module. Updated `executeBrowserStep()` to accept `userId` and resolve key. Updated `/api/browser/task` route to create client per-request with resolved key (removed module-level singleton).
+- **Added `resolveTelegramToken(userId)`**: `lib/integrations/telegram.ts` resolves per-user bot tokens. Updated `sendTelegramMessage()` to accept optional `botToken`. Updated workflow `sendTelegramMessage` handler and `/api/telegram/send` route to resolve and pass per-user token.
+- **Added `resolveTwilioConfig(userId)`**: `app/api/calls/route.ts` resolves per-user Twilio credentials (accountSid, authToken, phoneNumber). Removed module-level singleton Twilio client; now creates client per-request with resolved config.
+- **Fixed `planResearchQueriesStep()`**: Replaced hardcoded `process.env.OPENAI_API_KEY` + direct OpenAI client with `resolveProviderConfig()` + `createProvider()`. Now uses the agent's configured model provider/model and respects per-user API keys. Added `modelProvider` and `modelId` parameters.
 
 #### v1 (Lifecycle Redesign)
 
@@ -305,17 +338,18 @@ Routes secured with `requireUserId` + user-scoped queries:
 
 ## Memory System Analysis
 
-### Supermemory — Security Concerns
+### Supermemory — Current State (Updated v3)
 
-**Architecture**: Supermemory is an external semantic search API. Volition uses a single global `SUPERMEMORY_API_KEY` (set as an environment variable) shared across all users. Documents are stored with `metadata.agentId` and filtered at query time using `filters: { AND: [{ key: 'metadata.agentId', value: agentId }] }`.
+**Architecture**: Supermemory is an external semantic search API used as a research cache for web content scraped via Firecrawl. Documents are stored with `metadata.agentId` and filtered at query time.
 
-**Security issues**:
-1. **No user-level isolation**: All users' data lives in the same Supermemory workspace. An administrator with access to the Supermemory dashboard or API key can query any user's stored documents by changing the `agentId` filter — or by omitting it entirely.
-2. **Metadata-only filtering**: Filtering by `agentId` is a query-time filter, not an access control boundary. There is no mechanism in Supermemory to enforce that user A cannot read user B's data.
-3. **Admin visibility**: The platform administrator (who controls the `SUPERMEMORY_API_KEY`) has unrestricted access to all stored memories. This violates the requirement that admins should not be able to view user memories.
-4. **No per-user API keys**: Supermemory does not support per-user workspaces or API keys in the current integration.
+**v3 improvements**:
+1. **Per-user API key resolution**: `resolveSupermemoryKey(userId)` checks `tool_configs` for a per-user encrypted key before falling back to `process.env.SUPERMEMORY_API_KEY`. Users who configure their own key get fully isolated Supermemory workspaces.
+2. **userId flows through all call sites**: `storeMarkdown()`, `searchMemories()`, `planResearchQueriesStep()`, `executeResearchStep()`, and `/api/memories/search` all pass `userId` for key resolution.
 
-**Recommendation**: **Deprecate Supermemory for user-facing memory storage.** It can remain as an optional research tool (web search results caching) where the stored data is publicly available information, but personal agent memories (soul, preferences, knowledge, journal) must not be stored there. Rely on Google Drive for user-owned memory files.
+**Remaining considerations**:
+1. **Shared env-var fallback**: If a user has no per-user key and the env var is set, all such users share a single Supermemory workspace. Data is filtered by `agentId` at query time, but an administrator with the env key could query across users.
+2. **Personal memories NOT stored here**: Soul, preferences, knowledge, and journal files are stored in Google Drive (per-user OAuth isolation). Supermemory only caches research web content — publicly available information.
+3. **Acceptable risk**: Since Supermemory only stores public web scrapes (not personal data), the shared-fallback risk is low. Users who want full isolation can configure their own Supermemory key in Settings.
 
 ### Google Drive Memory — Current State
 
@@ -334,32 +368,64 @@ Volition/
 2. **`drive.file` scope**: Volition can only access files it created. It cannot read the user's other Drive files.
 3. **User owns the data**: Files are in the user's own Google Drive. They can view, edit, or delete them outside of Volition. They survive account deletion.
 
-**Current gaps**:
-1. **`withMemoryContext()` is defined but never called**: The function in `lib/ai/prompts.ts` is designed to inject `soul.md` and `preferences.md` into the system prompt, but it is NOT invoked in `agent-workflow.ts`. The workflow calls `withHITLGuidelines()` and `withSkills()` but skips memory context.
-2. **No auto-injection of memory files**: Agents must explicitly call the `readMemory` tool to access soul.md, preferences.md, etc. They do not automatically "remember" their identity or user preferences.
-3. **No embedding-based retrieval**: Google Drive files are accessed by exact filename only. There is no semantic/vector search over memory contents. If an agent has accumulated 50 pages of knowledge.md, there is no way to retrieve only the relevant sections for the current task.
-4. **No memory summarization or compaction**: Files grow indefinitely. No mechanism to summarize old journal entries or compact knowledge.md.
+**v3 improvements**:
+1. **`withMemoryContext()` now wired up**: `agent-workflow.ts` calls `loadMemoryContextStep()` to read `soul.md` and `preferences.md` from Google Drive, then passes them to `withMemoryContext()` for injection into the system prompt. Agents now have persistent identity across workflow runs.
+2. **Auto-injection of memory files**: `loadMemoryContextStep()` is a durable workflow step that gracefully handles missing files, missing Google OAuth tokens, or Drive API errors (returns nulls). Prompt order: base prompt -> HITL guidelines -> memory context -> skills.
+
+**Remaining gaps**:
+1. **No embedding-based retrieval**: Google Drive files are accessed by exact filename only. There is no semantic/vector search over memory contents. If an agent has accumulated 50 pages of knowledge.md, there is no way to retrieve only the relevant sections for the current task.
+2. **No memory summarization or compaction**: Files grow indefinitely. No mechanism to summarize old journal entries or compact knowledge.md.
+3. **knowledge.md and journal.md not auto-loaded**: Only `soul.md` and `preferences.md` are injected into the system prompt. `knowledge.md` and `journal.md` must be read explicitly via the `readMemory` tool. This is intentional — these files can grow large and would waste context window space.
 
 ### Comparison with OpenClaw's Memory System
 
-| Feature | OpenClaw | Volition (Current) | Gap |
-|---------|----------|-------------------|-----|
-| **Memory file auto-loading** | Personality + memory files loaded into context automatically at each turn | Agents must explicitly call `readMemory` tool — files are NOT auto-loaded | Critical gap — agents have no persistent identity |
-| **User-owned storage** | Local filesystem | Google Drive (user's account) | Parity — both give users ownership |
-| **File structure** | soul.md, memories.md, etc. in agent directory | soul.md, preferences.md, knowledge.md, journal.md in Drive folder | Parity |
-| **Semantic retrieval** | No (file-based, full load) | No (file-based, full load) | Parity — neither uses embeddings |
-| **Admin visibility** | Admin has filesystem access (local deployment) | Admin has NO access (user's own Drive) | Volition is better for multi-user |
+| Feature | OpenClaw | Volition (Current) | Status |
+|---------|----------|-------------------|--------|
+| **Memory file auto-loading** | Personality + memory files loaded into context automatically at each turn | `soul.md` and `preferences.md` auto-loaded via `loadMemoryContextStep()` + `withMemoryContext()` | **Parity** — both auto-inject personality/preferences |
+| **User-owned storage** | Local filesystem | Google Drive (user's account) | **Parity** — both give users ownership |
+| **File structure** | soul.md, memories.md, etc. in agent directory | soul.md, preferences.md, knowledge.md, journal.md in Drive folder | **Parity** |
+| **Semantic retrieval** | No (file-based, full load) | No (file-based, full load) | **Parity** — neither uses embeddings |
+| **Admin visibility** | Admin has filesystem access (local deployment) | Admin has NO access (user's own Drive) | **Volition is better** for multi-user |
 | **Cross-agent memory** | Shared filesystem possible | Per-agent Drive folders, no sharing | Acceptable difference |
+| **Per-user API key isolation** | N/A (single-user) | Per-user encrypted keys for LLM providers, Supermemory, Google OAuth | **Volition is better** — multi-tenant isolation |
 
 ### Recommended Actions
 
-1. **Wire up `withMemoryContext()`**: In `agent-workflow.ts`, call `readMemoryFile()` for `soul.md` and `preferences.md` at workflow start, then pass them to `withMemoryContext()`. This gives agents persistent identity without requiring an explicit tool call each time. This is the highest-priority memory fix — without it, agents "forget" who they are between workflow runs.
+1. ~~**Wire up `withMemoryContext()`**~~ — **DONE (v3)**. `loadMemoryContextStep()` + `withMemoryContext()` now auto-inject soul.md and preferences.md into the system prompt at workflow start.
 
-2. **Deprecate Supermemory for personal memory**: Remove Supermemory from the `storeMemory`/`searchMemory` tools used for personal agent context. Keep it only as a research cache for web content (which is public data). Update the settings page to clarify this distinction.
+2. ~~**Per-user Supermemory keys**~~ — **DONE (v3)**. `resolveSupermemoryKey(userId)` resolves per-user encrypted keys from `tool_configs`, with env var fallback. All call sites pass `userId`.
 
-3. **Add memory file size management**: Implement a `compactMemory` step that summarizes journal.md when it exceeds a threshold (e.g., 10K characters). Prevents context window overflow when loading memory files.
+3. **Fix remaining auth gaps** (priority: high):
+   - Add `requireAgentOwnership()` to `POST /api/activities`
+   - Add `requireAgentOwnership()` to `GET/PUT /api/agents/:id/memory`
+   - Add ownership validation to Telegram `/start <agentId>` deep-link
 
-4. **Future: Embedding-based retrieval**: For knowledge.md (which can grow large), consider chunking and embedding for contextual retrieval. This is not urgent — OpenClaw also does full-file loading — but will become necessary as agents accumulate knowledge over weeks/months.
+4. ~~**Add per-user key resolution for remaining services**~~ — **DONE (v3)**. Added `resolveFirecrawlKey()`, `resolveBrowserUseKey()`, `resolveTelegramToken()`, `resolveTwilioConfig()`. Fixed `planResearchQueriesStep()` to use `resolveProviderConfig()` with the agent's model config instead of hardcoded `process.env.OPENAI_API_KEY`.
+
+5. **Add memory file size management** (priority: low): Implement a `compactMemory` step that summarizes journal.md when it exceeds a threshold (e.g., 10K characters). Prevents context window overflow when loading memory files.
+
+6. **Future: Embedding-based retrieval**: For knowledge.md (which can grow large), consider chunking and embedding for contextual retrieval. This is not urgent — OpenClaw also does full-file loading — but will become necessary as agents accumulate knowledge over weeks/months.
+
+---
+
+## Per-User API Key Resolution Audit
+
+This section tracks whether each external service correctly resolves per-user keys from `tool_configs` (encrypted) or relies solely on environment variables.
+
+| Service | Key Source | Per-User? | userId Flows? | Settings UI? | Status |
+|---------|-----------|-----------|---------------|-------------|--------|
+| **OpenAI** (LLM) | `resolveProviderConfig()` -> `tool_configs` -> `process.env` | Yes | Yes (workflow) | Yes | **Working** |
+| **Anthropic** (LLM) | `resolveProviderConfig()` -> `tool_configs` -> `process.env` | Yes | Yes (workflow) | Yes | **Working** |
+| **Supermemory** | `resolveSupermemoryKey()` -> `tool_configs` -> `process.env` | Yes | Yes (all call sites) | Yes | **Working** |
+| **Google OAuth** | `getOAuth2Client(userId)` -> `tool_configs` | Yes (required) | Yes | Yes | **Working** |
+| **Google Drive** | Inherits from Google OAuth | Yes | Yes | N/A | **Working** |
+| **Firecrawl** | `resolveFirecrawlKey()` -> `tool_configs` -> `process.env` | Yes | Yes (workflow + API routes) | Yes | **Working** |
+| **Browser-Use** | `resolveBrowserUseKey()` -> `tool_configs` -> `process.env` | Yes | Yes (workflow + API route) | Yes | **Working** |
+| **Telegram** | `resolveTelegramToken()` -> `tool_configs` -> `process.env` | Yes | Yes (workflow + API route) | Yes | **Working** |
+| **Twilio** | `resolveTwilioConfig()` -> `tool_configs` -> `process.env` | Yes | Yes (calls route) | Yes | **Working** |
+| **`planResearchQueriesStep`** | `resolveProviderConfig()` -> `tool_configs` -> `process.env` | Yes | Yes (agent model config passed through) | N/A | **Working** |
+
+**Summary**: All 10 integration points correctly resolve per-user keys from `tool_configs` (encrypted), with env var fallback. Every Settings UI-saveable tool is now backed by actual per-user key resolution in the integration code.
 
 ---
 
@@ -404,6 +470,23 @@ Volition/
 ---
 
 ## Files Created/Modified
+
+### New files (v3):
+- `lib/integrations/browser-use.ts` — `resolveBrowserUseKey(userId)` helper for per-user Browser-Use API key resolution
+
+### Modified files (v3 — per-user keys & memory context):
+- `lib/ai/providers/index.ts` — Fixed `resolveProviderConfig()`: `decryptValue` -> `decrypt`, `config` column -> `data_encrypted`
+- `lib/integrations/supermemory.ts` — Added `resolveSupermemoryKey(userId)`, added `userId` to `StoreMarkdownInput`, updated `storeMarkdown()` and `searchMemories()` signatures
+- `lib/integrations/firecrawl.ts` — Added `resolveFirecrawlKey(userId)`, threaded `apiKey` through `getAuthHeader()`, `doFetch()`, `searchFirecrawl()`, `scrapeFirecrawl()`, `searchAndScrape()`
+- `lib/integrations/telegram.ts` — Added `resolveTelegramToken(userId)`, updated `sendTelegramMessage()` to accept optional `botToken`
+- `lib/ai/workflows/steps.ts` — Added `userId` param to `planResearchQueriesStep()`, `executeResearchStep()`, and `executeBrowserStep()`. Updated all tool switch case call sites. Added `loadMemoryContextStep()`. Replaced hardcoded OpenAI client in `planResearchQueriesStep()` with `resolveProviderConfig()` + `createProvider()`.
+- `lib/ai/workflows/agent-workflow.ts` — Imported `withMemoryContext` and `loadMemoryContextStep`, wired up memory context injection after `getAgentContextStep()`
+- `app/api/memories/search/route.ts` — Imported `resolveSupermemoryKey`, captured `userId` from `requireAgentOwnership()`, replaced env var with `resolveSupermemoryKey(userId)`
+- `app/api/research/firecrawl/search/route.ts` — Imported `resolveFirecrawlKey` and `getUserId`, resolve per-user key before calling `searchFirecrawl()`
+- `app/api/research/firecrawl/scrape/route.ts` — Imported `resolveFirecrawlKey` and `getUserId`, resolve per-user key before calling `scrapeFirecrawl()`
+- `app/api/browser/task/route.ts` — Imported `resolveBrowserUseKey`, removed module-level singleton client, resolve per-user key and create client per-request
+- `app/api/telegram/send/route.ts` — Imported `resolveTelegramToken`, resolve per-user token and pass to `sendTelegramMessage()`
+- `app/api/calls/route.ts` — Added `resolveTwilioConfig()`, removed module-level singleton Twilio client, resolve per-user config and create client per-request
 
 ### New files (lifecycle redesign):
 - `db/migrations/015_agent_enabled.sql` — `enabled BOOLEAN` column on agents

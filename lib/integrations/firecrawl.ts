@@ -1,6 +1,31 @@
 import type { RequestInit } from 'next/dist/server/web/spec-extension/request';
+import { sql } from '@/lib/db';
+import { decrypt } from '@/lib/crypto';
 
 const FIRECRAWL_BASE_URL = 'https://api.firecrawl.dev/v2';
+
+/**
+ * Resolve the Firecrawl API key: per-user tool_configs first, env var fallback.
+ */
+export async function resolveFirecrawlKey(userId?: string | null): Promise<string | undefined> {
+  if (userId) {
+    try {
+      const configs = await sql`
+        SELECT data_encrypted FROM tool_configs
+        WHERE user_id = ${userId} AND tool = 'firecrawl'
+      `;
+      if (configs.length > 0 && configs[0].data_encrypted) {
+        const data = JSON.parse(decrypt(configs[0].data_encrypted));
+        if (data.apiKey) {
+          return data.apiKey;
+        }
+      }
+    } catch {
+      // Fall through to env var
+    }
+  }
+  return process.env.FIRECRAWL_API_KEY;
+}
 
 interface SearchParams {
   query: string;
@@ -37,20 +62,20 @@ export interface FirecrawlScrapeResult {
   metadata?: Record<string, any>;
 }
 
-function getAuthHeader(): HeadersInit {
-  const apiKey = process.env.FIRECRAWL_API_KEY;
-  if (!apiKey) throw new Error('FIRECRAWL_API_KEY not configured');
-  return { Authorization: `Bearer ${apiKey}` };
+function getAuthHeader(apiKey?: string): HeadersInit {
+  const key = apiKey || process.env.FIRECRAWL_API_KEY;
+  if (!key) throw new Error('FIRECRAWL_API_KEY not configured');
+  return { Authorization: `Bearer ${key}` };
 }
 
-async function doFetch<T>(path: string, init: RequestInit): Promise<T> {
+async function doFetch<T>(path: string, init: RequestInit, apiKey?: string): Promise<T> {
   const res = await fetch(`${FIRECRAWL_BASE_URL}${path}`, {
     ...init,
     // 30s default timeout via AbortController
     signal: init.signal,
     headers: {
       'Content-Type': 'application/json',
-      ...getAuthHeader(),
+      ...getAuthHeader(apiKey),
       ...(init.headers || {}),
     },
   });
@@ -69,7 +94,7 @@ async function doFetch<T>(path: string, init: RequestInit): Promise<T> {
   return json as T;
 }
 
-export async function searchFirecrawl(params: SearchParams): Promise<FirecrawlSearchResult> {
+export async function searchFirecrawl(params: SearchParams & { apiKey?: string }): Promise<FirecrawlSearchResult> {
   const body = {
     query: params.query,
     limit: Math.min(Math.max(params.limit ?? 5, 1), 20),
@@ -81,7 +106,7 @@ export async function searchFirecrawl(params: SearchParams): Promise<FirecrawlSe
   const json = await doFetch<any>('/search', {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, params.apiKey);
 
   // Responses can be { success, data: { web, images, news } } or array when scrapeOptions
   const items: FirecrawlSearchItem[] = [];
@@ -105,7 +130,7 @@ export async function searchFirecrawl(params: SearchParams): Promise<FirecrawlSe
   return { items };
 }
 
-export async function scrapeFirecrawl(params: ScrapeParams): Promise<FirecrawlScrapeResult> {
+export async function scrapeFirecrawl(params: ScrapeParams & { apiKey?: string }): Promise<FirecrawlScrapeResult> {
   const body = {
     url: params.url,
     formats: params.formats ?? ['markdown', 'links'],
@@ -116,7 +141,7 @@ export async function scrapeFirecrawl(params: ScrapeParams): Promise<FirecrawlSc
   const json = await doFetch<any>('/scrape', {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, params.apiKey);
 
   const data = json?.data ?? {};
   return {
@@ -131,6 +156,7 @@ export async function scrapeFirecrawl(params: ScrapeParams): Promise<FirecrawlSc
 // Unified search+scrape in one request using Firecrawl /search with scrapeOptions
 export interface SearchAndScrapeParams extends Omit<SearchParams, 'limit'> {
   limit?: number;
+  apiKey?: string;
   scrapeOptions?: {
     formats?: Array<'markdown' | 'links' | 'html'>;
     onlyMainContent?: boolean;
@@ -186,7 +212,7 @@ export async function searchAndScrape(params: SearchAndScrapeParams): Promise<Se
   const json = await doFetch<any>('/search', {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, params.apiKey);
 
   // When scrapeOptions are provided, Firecrawl may return:
   // - { data: [...] } (array format) OR

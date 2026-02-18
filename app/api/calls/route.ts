@@ -1,12 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { requireAgentOwnership, requireUserId } from '@/lib/auth';
+import { decrypt } from '@/lib/crypto';
 import twilio from 'twilio';
 
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+/**
+ * Resolve Twilio config: per-user tool_configs first, env var fallback.
+ */
+async function resolveTwilioConfig(userId?: string | null): Promise<{
+  accountSid?: string;
+  authToken?: string;
+  phoneNumber?: string;
+}> {
+  if (userId) {
+    try {
+      const configs = await sql`
+        SELECT data_encrypted FROM tool_configs
+        WHERE user_id = ${userId} AND tool = 'twilio'
+      `;
+      if (configs.length > 0 && configs[0].data_encrypted) {
+        const data = JSON.parse(decrypt(configs[0].data_encrypted));
+        if (data.accountSid && data.authToken) {
+          return {
+            accountSid: data.accountSid,
+            authToken: data.authToken,
+            phoneNumber: data.phoneNumber,
+          };
+        }
+      }
+    } catch {
+      // Fall through to env vars
+    }
+  }
+  return {
+    accountSid: process.env.TWILIO_ACCOUNT_SID,
+    authToken: process.env.TWILIO_AUTH_TOKEN,
+    phoneNumber: process.env.TWILIO_PHONE_NUMBER,
+  };
+}
 
 /**
  * POST /api/calls
@@ -21,11 +52,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'agent_id and to_number are required' }, { status: 400 });
     }
 
-    await requireAgentOwnership(agent_id);
+    const userId = await requireAgentOwnership(agent_id);
 
-    if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
+    const twilioConfig = await resolveTwilioConfig(userId);
+    if (!twilioConfig.accountSid || !twilioConfig.authToken || !twilioConfig.phoneNumber) {
       return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 503 });
     }
+
+    const twilioClient = twilio(twilioConfig.accountSid, twilioConfig.authToken);
 
     const callResult = await sql`
       INSERT INTO calls (agent_id, to_number, status)
@@ -39,7 +73,7 @@ export async function POST(request: NextRequest) {
     try {
       const twilioCall = await twilioClient.calls.create({
         to: to_number,
-        from: process.env.TWILIO_PHONE_NUMBER,
+        from: twilioConfig.phoneNumber,
         url: `${baseUrl}/api/twilio/voice?callId=${call.id}&context=${encodeURIComponent(JSON.stringify(context))}`,
         statusCallback: `${baseUrl}/api/twilio/status?callId=${call.id}`,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],

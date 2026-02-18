@@ -16,22 +16,25 @@ import { getStepMetadata } from 'workflow';
 export async function planResearchQueriesStep(
   agentId: string,
   researchTopic: string,
-  systemPrompt?: string
+  systemPrompt?: string,
+  userId?: string | null,
+  modelProvider?: string | null,
+  modelId?: string | null
 ): Promise<{ queries: string[]; existingResearch?: string }> {
   'use step';
 
   const { searchMemories } = await import('@/lib/integrations/supermemory');
-  
+
   // Search Supermemory for existing research on this topic
-  const existingDocs = await searchMemories(agentId, researchTopic, 10);
-  
+  const existingDocs = await searchMemories(agentId, researchTopic, 10, userId);
+
   let existingResearchSummary = '';
   if (existingDocs.length > 0) {
     // Extract URLs to avoid exact duplicates
     const existingUrls = existingDocs
       .map(doc => doc.metadata?.url)
       .filter(Boolean) as string[];
-    
+
     // Use longer content previews (1000 chars) for better context
     const summaries = existingDocs.slice(0, 5).map((doc, idx) => {
       const title = doc.metadata?.title || `Document ${idx + 1}`;
@@ -39,17 +42,16 @@ export async function planResearchQueriesStep(
       const preview = doc.content.slice(0, 1000).replace(/\s+/g, ' ');
       return `- ${title}${url ? ` (${url})` : ''}: ${preview}...`;
     });
-    
+
     existingResearchSummary = `\n\nExisting research found in memory (${existingDocs.length} documents):\n${summaries.join('\n')}\n\nCRITICAL: Do NOT research URLs that are already in memory. Existing URLs: ${existingUrls.slice(0, 15).join(', ')}\n\nFocus on gaps, new angles, or deeper dives into specific aspects that aren't covered above.`;
   } else {
     existingResearchSummary = '\n\nNo existing research found in memory. You can explore this topic broadly.';
   }
 
-  // Use LLM to decompose topic into focused search queries
-  const { default: OpenAI } = await import('openai');
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY!,
-  });
+  // Use LLM provider abstraction to decompose topic into focused search queries
+  const { resolveProviderConfig, createProvider } = await import('@/lib/ai/providers');
+  const providerConfig = await resolveProviderConfig(modelProvider, modelId, userId);
+  const provider = createProvider(providerConfig);
 
   const planningPrompt = `You are a research query planner. Decompose the research topic into 3-5 focused, specific search queries that will yield high-quality results.
 
@@ -70,8 +72,8 @@ Requirements:
 Return a JSON object with a "queries" array containing 3-5 search query strings. Example: {"queries": ["query 1", "query 2", "query 3"]}`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-5.2-2025-12-11',
+    const completion = await provider.createCompletion({
+      model: providerConfig.model,
       messages: [
         {
           role: 'system',
@@ -79,10 +81,9 @@ Return a JSON object with a "queries" array containing 3-5 search query strings.
         },
         { role: 'user', content: planningPrompt },
       ],
-      response_format: { type: 'json_object' },
     });
 
-    const responseText = completion.choices[0]?.message?.content || '{}';
+    const responseText = completion.message?.content || '{}';
     const parsed = JSON.parse(responseText);
     
     // Extract queries from response (handle different formats)
@@ -122,16 +123,18 @@ Return a JSON object with a "queries" array containing 3-5 search query strings.
 /**
  * Execute a research step: search, scrape, and store content
  */
-export async function executeResearchStep(agentId: string, query: string, sessionId: string) {
+export async function executeResearchStep(agentId: string, query: string, sessionId: string, userId?: string | null) {
   'use step';
-  
-  const { searchAndScrape } = await import('@/lib/integrations/firecrawl');
+
+  const { searchAndScrape, resolveFirecrawlKey } = await import('@/lib/integrations/firecrawl');
   const { storeMarkdown, searchMemories } = await import('@/lib/integrations/supermemory');
-  
-  const result = await searchAndScrape({ 
-    query, 
-    limit: 3, 
-    scrapeOptions: { formats: ['markdown', 'links'] } 
+
+  const firecrawlKey = await resolveFirecrawlKey(userId);
+  const result = await searchAndScrape({
+    query,
+    limit: 3,
+    apiKey: firecrawlKey,
+    scrapeOptions: { formats: ['markdown', 'links'] },
   });
   
   const leads: Array<{ url: string; title?: string; providerId?: string }> = [];
@@ -141,7 +144,7 @@ export async function executeResearchStep(agentId: string, query: string, sessio
     
     // Check for duplicate URL in Supermemory before storing
     try {
-      const existingDocs = await searchMemories(agentId, item.url, 1);
+      const existingDocs = await searchMemories(agentId, item.url, 1, userId);
       const isDuplicate = existingDocs.some(doc => doc.metadata?.url === item.url);
       
       if (isDuplicate) {
@@ -156,11 +159,12 @@ export async function executeResearchStep(agentId: string, query: string, sessio
     const md = (item.markdown ?? '').slice(0, 40000);
     if (md.length > 0) {
       try {
-        const stored = await storeMarkdown({ 
-          agentId, 
-          url: item.url, 
-          title: item.title, 
-          markdown: md 
+        const stored = await storeMarkdown({
+          agentId,
+          url: item.url,
+          title: item.title,
+          markdown: md,
+          userId: userId || undefined,
         });
         if (stored.memoryId) {
           console.log(`[executeResearchStep] ✅ Stored: ${item.title || item.url} (memoryId: ${stored.memoryId})`);
@@ -184,15 +188,19 @@ export async function executeResearchStep(agentId: string, query: string, sessio
 /**
  * Execute a browser automation task
  */
-export async function executeBrowserStep(agentId: string, task: string, maxSteps?: number) {
+export async function executeBrowserStep(agentId: string, task: string, maxSteps?: number, userId?: string | null) {
   'use step';
-  
+
   // Browser automation using Browser-Use SDK
   const { BrowserUseClient } = await import('browser-use-sdk');
-  
-  const browserClient = new BrowserUseClient({
-    apiKey: process.env.BROWSER_USE_API_KEY!,
-  });
+  const { resolveBrowserUseKey } = await import('@/lib/integrations/browser-use');
+
+  const apiKey = await resolveBrowserUseKey(userId);
+  if (!apiKey) {
+    return { success: false, error: 'BROWSER_USE_API_KEY not configured' };
+  }
+
+  const browserClient = new BrowserUseClient({ apiKey });
   
   try {
     const { stepId } = getStepMetadata();
@@ -935,7 +943,7 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'planResearchQueries': {
-          const planResult = await planResearchQueriesStep(agentId, args.researchTopic, systemPrompt);
+          const planResult = await planResearchQueriesStep(agentId, args.researchTopic, systemPrompt, userId, args.modelProvider, args.modelId);
           result = {
             success: true,
             queries: planResult.queries,
@@ -950,7 +958,7 @@ export async function executeLLMDecisionStep(args: {
           } else {
             researchStarted = true;
             try {
-              const res = await executeResearchStep(agentId, args.query, currentSessionId);
+              const res = await executeResearchStep(agentId, args.query, currentSessionId, userId);
               const links = res.leads.map((l: any) => l.url);
               const notes = res.leads.map((l: any) => `${l.title}: ${l.url}`);
               await appendToSessionStep(currentSessionId, args.query, links, notes);
@@ -1051,7 +1059,7 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'browserTask': {
-          result = await executeBrowserStep(agentId, args.task, args.maxSteps || 10);
+          result = await executeBrowserStep(agentId, args.task, args.maxSteps || 10, userId);
           break;
         }
         case 'sendEmail': {
@@ -1178,7 +1186,7 @@ export async function executeLLMDecisionStep(args: {
         }
         case 'sendTelegramMessage': {
           try {
-            const { sendTelegramMessage: tgSend } = await import('@/lib/integrations/telegram');
+            const { sendTelegramMessage: tgSend, resolveTelegramToken } = await import('@/lib/integrations/telegram');
 
             let chatId = args.chatId;
             if (!chatId) {
@@ -1195,7 +1203,8 @@ export async function executeLLMDecisionStep(args: {
               chatId = rows[0].telegram_user_id;
             }
 
-            const tgResult = await tgSend({ chatId, text: args.text, parseMode: args.parseMode });
+            const botToken = await resolveTelegramToken(userId);
+            const tgResult = await tgSend({ chatId, text: args.text, parseMode: args.parseMode, botToken });
 
             // Log activity
             await logActivityStep(agentId, 'telegram_message_sent', {
@@ -1312,5 +1321,31 @@ export async function executeLLMDecisionStep(args: {
     researchStarted,
     researchSessionCompleted,
   };
+}
+
+/**
+ * Load soul.md and preferences.md from Google Drive for memory context injection.
+ * Returns nulls gracefully if Drive is not configured or files don't exist yet.
+ */
+export async function loadMemoryContextStep(
+  userId: string | null,
+  agentId: string
+): Promise<{ soulMd: string | null; preferencesMd: string | null }> {
+  'use step';
+
+  if (!userId) {
+    return { soulMd: null, preferencesMd: null };
+  }
+
+  try {
+    const { readMemoryFile } = await import('@/lib/integrations/google-drive');
+    const [soulMd, preferencesMd] = await Promise.all([
+      readMemoryFile(userId, agentId, 'soul.md').catch(() => null),
+      readMemoryFile(userId, agentId, 'preferences.md').catch(() => null),
+    ]);
+    return { soulMd: soulMd || null, preferencesMd: preferencesMd || null };
+  } catch {
+    return { soulMd: null, preferencesMd: null };
+  }
 }
 

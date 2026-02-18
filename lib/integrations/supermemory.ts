@@ -1,17 +1,42 @@
 import crypto from 'crypto'
 import Supermemory from 'supermemory'
 import { sql } from '@/lib/db'
+import { decrypt } from '@/lib/crypto'
 
 /**
  * Supermemory integration helper
  * Stores content in Supermemory API and persists a reference in our local DB.
  */
 
+/**
+ * Resolve the Supermemory API key: per-user tool_configs first, env var fallback.
+ */
+export async function resolveSupermemoryKey(userId?: string | null): Promise<string | undefined> {
+  if (userId) {
+    try {
+      const configs = await sql`
+        SELECT data_encrypted FROM tool_configs
+        WHERE user_id = ${userId} AND tool = 'supermemory'
+      `;
+      if (configs.length > 0 && configs[0].data_encrypted) {
+        const data = JSON.parse(decrypt(configs[0].data_encrypted));
+        if (data.apiKey) {
+          return data.apiKey;
+        }
+      }
+    } catch {
+      // Fall through to env var
+    }
+  }
+  return process.env.SUPERMEMORY_API_KEY;
+}
+
 export interface StoreMarkdownInput {
   agentId: string
   url: string
   title?: string
   markdown: string
+  userId?: string
 }
 
 export interface StoreMarkdownResult {
@@ -19,11 +44,11 @@ export interface StoreMarkdownResult {
   memoryId?: string
 }
 
-export async function storeMarkdown({ agentId, url, title, markdown }: StoreMarkdownInput): Promise<StoreMarkdownResult> {
+export async function storeMarkdown({ agentId, url, title, markdown, userId }: StoreMarkdownInput): Promise<StoreMarkdownResult> {
   let providerId: string | undefined
 
-  // Store in Supermemory API if configured
-  const apiKey = process.env.SUPERMEMORY_API_KEY
+  // Store in Supermemory API if configured (per-user key first, env var fallback)
+  const apiKey = await resolveSupermemoryKey(userId)
   if (apiKey) {
     try {
       const sm = new Supermemory({ apiKey })
@@ -66,8 +91,8 @@ export async function storeMarkdown({ agentId, url, title, markdown }: StoreMark
 /**
  * Search Supermemory for relevant research documents
  */
-export async function searchMemories(agentId: string, query: string, limit: number = 10): Promise<Array<{ id: string; content: string; metadata?: any }>> {
-  const apiKey = process.env.SUPERMEMORY_API_KEY
+export async function searchMemories(agentId: string, query: string, limit: number = 10, userId?: string | null): Promise<Array<{ id: string; content: string; metadata?: any }>> {
+  const apiKey = await resolveSupermemoryKey(userId)
   if (!apiKey) {
     return []
   }

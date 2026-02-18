@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { scrapeFirecrawl } from '@/lib/integrations/firecrawl';
+import { scrapeFirecrawl, resolveFirecrawlKey } from '@/lib/integrations/firecrawl';
 import { rateLimit } from '@/lib/api/rate-limit';
+import { getUserId } from '@/lib/auth';
 
 const InputSchema = z.object({
   url: z.string().url(),
@@ -29,7 +30,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!process.env.FIRECRAWL_API_KEY) {
+    const userId = await getUserId();
+    const apiKey = await resolveFirecrawlKey(userId);
+    if (!apiKey) {
       return NextResponse.json(
         { error: 'FIRECRAWL_API_KEY not configured' },
         { status: 503 }
@@ -46,7 +49,7 @@ export async function POST(request: NextRequest) {
     } catch {
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
     }
-    const data = await scrapeFirecrawl({ url });
+    const data = await scrapeFirecrawl({ url, apiKey });
     return NextResponse.json(data);
   } catch (error: any) {
     const status = (error && typeof error.status === 'number') ? error.status : 500;
