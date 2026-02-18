@@ -162,28 +162,22 @@ async function testSupermemory(userId: string) {
       SELECT data_encrypted FROM tool_configs
       WHERE user_id = ${userId} AND tool = 'supermemory'
     `;
-    
+
     if (configs.length === 0) {
       return NextResponse.json({
         success: false,
         error: 'Supermemory not configured',
       });
     }
-    
+
     const data = JSON.parse(await decrypt(configs[0].data_encrypted));
     const apiKey = data.apiKey;
-    
-    // Test API call
-    const response = await fetch('https://api.supermemory.ai/v1/health', {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-    });
-    
-    if (!response.ok) {
-      throw new Error('API request failed');
-    }
-    
+
+    // Test using the SDK (same as production code) with a lightweight search
+    const Supermemory = (await import('supermemory')).default;
+    const sm = new Supermemory({ apiKey });
+    await sm.search.documents({ q: 'test', limit: 1 });
+
     return NextResponse.json({
       success: true,
       message: 'Supermemory API connection successful',
