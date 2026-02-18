@@ -29,20 +29,38 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         // Store Google OAuth tokens for Gmail/Calendar/Drive access
         if (account.access_token) {
-          const { encrypt } = await import('@/lib/crypto');
-          const tokens = {
-            access_token: account.access_token,
-            refresh_token: account.refresh_token,
-            expiry_date: account.expires_at ? account.expires_at * 1000 : undefined,
-            scope: account.scope,
-            token_type: account.token_type,
-          };
-          const encrypted = encrypt(JSON.stringify(tokens));
+          const { encrypt, decrypt } = await import('@/lib/crypto');
 
           // Get the user's DB ID
           const rows = await sql`SELECT id FROM users WHERE email = ${user.email}`;
           const userId = rows[0]?.id;
           if (userId) {
+            // If no refresh_token in this login, preserve the existing one from DB
+            let refreshToken = account.refresh_token;
+            if (!refreshToken) {
+              try {
+                const existing = await sql`
+                  SELECT data_encrypted FROM tool_configs
+                  WHERE user_id = ${userId} AND tool = 'google_oauth'
+                `;
+                if (existing[0]?.data_encrypted) {
+                  const prev = JSON.parse(decrypt(existing[0].data_encrypted));
+                  refreshToken = prev.refresh_token;
+                }
+              } catch {
+                // No existing tokens, proceed without refresh_token
+              }
+            }
+
+            const tokens = {
+              access_token: account.access_token,
+              refresh_token: refreshToken,
+              expiry_date: account.expires_at ? account.expires_at * 1000 : undefined,
+              scope: account.scope,
+              token_type: account.token_type,
+            };
+            const encrypted = encrypt(JSON.stringify(tokens));
+
             await sql`
               INSERT INTO tool_configs (user_id, tool, data_encrypted)
               VALUES (${userId}, 'google_oauth', ${encrypted})

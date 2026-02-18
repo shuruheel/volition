@@ -14,7 +14,7 @@ export const authConfig = {
       authorization: {
         params: {
           access_type: 'offline',
-          prompt: 'consent',
+          prompt: 'select_account',
           scope: [
             'openid',
             'email',
