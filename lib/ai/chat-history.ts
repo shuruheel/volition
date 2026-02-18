@@ -31,6 +31,7 @@ export async function getLastChatTurns(agentId: string, limit: number = 20): Pro
       AND (
         type = 'user_message'
         OR type = 'user_input'
+        OR type = 'agent_message'
         OR (type = 'research' AND (payload ->> 'chatAck')::boolean = true)
       )
     ORDER BY created_at DESC
@@ -55,6 +56,12 @@ export async function getLastChatTurns(agentId: string, limit: number = 20): Pro
       const answer = typeof payload.answer === 'string' ? payload.answer : null;
       if (question) expanded.push({ ts: createdAt, msg: { role: 'assistant', content: question } });
       if (answer) expanded.push({ ts: createdAt, msg: { role: 'user', content: answer } });
+      continue;
+    }
+
+    if (row.type === 'agent_message') {
+      const content = typeof payload.content === 'string' ? payload.content : '';
+      if (content) expanded.push({ ts: createdAt, msg: { role: 'assistant', content } });
       continue;
     }
 

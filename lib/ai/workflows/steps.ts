@@ -613,6 +613,26 @@ export async function executeLLMDecisionStep(args: {
     },
   ];
 
+  // sendMessage — post a message to the user without pausing the workflow
+  tools.push({
+    type: 'function',
+    function: {
+      name: 'sendMessage',
+      description: 'Send a message to the user. Unlike askUser (which pauses the workflow and waits for a reply), this just posts a message and continues execution. Use this for greetings, status updates, confirmations, and any time you want to communicate without blocking.',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: {
+            type: 'string',
+            description: 'The message content to send to the user (supports markdown)',
+          },
+        },
+        required: ['content'],
+        additionalProperties: false,
+      },
+    },
+  });
+
   // Sub-agent spawning tool
   tools.push({
     type: 'function',
@@ -934,10 +954,12 @@ export async function executeLLMDecisionStep(args: {
   // Multi-turn conversation loop (like AI SDK maxSteps behavior)
   const conversationMessages = [...messages];
   let lastFinishReason = 'stop';
+  let lastAssistantText: string | null = null;
+  let usedSendMessage = false;
   const maxTurns = 5; // Reduced to 5 to avoid timeout (each turn can take 10-20s with tool calls)
-  
+
   // Minimal logging for key steps
-  
+
   for (let turn = 0; turn < maxTurns; turn++) {
     // Call LLM via provider abstraction
     const completion = await provider.createCompletion({
@@ -962,6 +984,10 @@ export async function executeLLMDecisionStep(args: {
         content: message.content,
         tool_calls: message.tool_calls,
       });
+      // Track latest assistant text for auto-persistence
+      if (typeof message.content === 'string' && message.content.trim()) {
+        lastAssistantText = message.content.trim();
+      }
     }
 
     // If no tool calls, we're done
@@ -1031,11 +1057,17 @@ export async function executeLLMDecisionStep(args: {
           }
           break;
         }
+        case 'sendMessage': {
+          await logActivityStep(agentId, 'agent_message', { content: args.content });
+          usedSendMessage = true;
+          result = { success: true };
+          break;
+        }
         case 'logActivity': {
           // Validate activity type
           const validTypes = [
             'research', 'email_sent', 'phone_call', 'webpage_viewed',
-            'journal_read', 'task_completed', 'agent_stopped'
+            'journal_read', 'task_completed', 'agent_stopped', 'agent_message'
           ];
           
           if (!validTypes.includes(args.type)) {
@@ -1053,7 +1085,6 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'askUser': {
-          const { stepId } = getStepMetadata();
           const activityId = await createPendingActivityStep(
             agentId,
             'user_input',
@@ -1067,8 +1098,8 @@ export async function executeLLMDecisionStep(args: {
             currentTool: 'askUser',
           });
 
-          // Use stepId in token for idempotency
-          const token = `agent-${agentId}-activity-${activityId}-step-${stepId}`;
+          // Token must match the format used by the approve route: agent-{id}-activity-{id}
+          const token = `agent-${agentId}-activity-${activityId}`;
           
           // Check if activity is already approved (in case of replay)
           const [existingActivity] = await sql<any[]>`
@@ -1125,8 +1156,7 @@ export async function executeLLMDecisionStep(args: {
             currentTool: 'sendEmail',
           });
 
-          const { stepId: emailStepId } = getStepMetadata();
-          const emailToken = `agent-${agentId}-activity-${emailActivityId}-step-${emailStepId}`;
+          const emailToken = `agent-${agentId}-activity-${emailActivityId}`;
 
           try {
             const emailEvents = emailApprovalHook.create({ token: emailToken });
@@ -1185,8 +1215,7 @@ export async function executeLLMDecisionStep(args: {
             currentTool: 'createCalendarEvent',
           });
 
-          const { stepId: calStepId } = getStepMetadata();
-          const calToken = `agent-${agentId}-activity-${calActivityId}-step-${calStepId}`;
+          const calToken = `agent-${agentId}-activity-${calActivityId}`;
 
           try {
             const calEvents = activityApprovalHook.create({ token: calToken });
@@ -1400,6 +1429,15 @@ export async function executeLLMDecisionStep(args: {
     
     // Add all tool results to conversation
     conversationMessages.push(...toolResults);
+  }
+
+  // Auto-persist final LLM text as agent_message if sendMessage wasn't explicitly used
+  if (lastAssistantText && !usedSendMessage) {
+    try {
+      await logActivityStep(agentId, 'agent_message', { content: lastAssistantText });
+    } catch (e) {
+      console.error('[executeLLMDecisionStep] Failed to auto-persist LLM text:', e);
+    }
   }
 
   // Return serializable data only

@@ -65,6 +65,14 @@ export function ChatDrawer({ agents, triggerAgentId }: ChatDrawerProps) {
             seenIds.add(a.id)
             return [{ id: a.id, role: 'user', content, timestamp: new Date(a.created_at) }]
           }
+          if (a.type === 'agent_message') {
+            const payload = (a.payload ?? {}) as Record<string, unknown>
+            const content = typeof payload.content === 'string' ? payload.content : ''
+            if (!content) return []
+            if (seenIds.has(a.id)) return []
+            seenIds.add(a.id)
+            return [{ id: a.id, role: 'agent' as const, content, timestamp: new Date(a.created_at) }]
+          }
           if (a.type === 'research' && (a.payload as Record<string, unknown> | undefined)?.chatAck) {
             const payload = (a.payload ?? {}) as Record<string, unknown>
             const content = typeof payload.content === 'string' ? payload.content : 'Okay, proceeding.'
@@ -97,7 +105,7 @@ export function ChatDrawer({ agents, triggerAgentId }: ChatDrawerProps) {
 
     // Prime with an initial snapshot (no loop)
     ;(async () => {
-      const types = ['user_input','user_message','research','post_call_summary']
+      const types = ['user_input','user_message','agent_message','research','post_call_summary']
       const params = new URLSearchParams({ agentId: selectedAgentId, types: types.join(','), limit: '100' })
       const res = await fetch(`/api/activities?${params.toString()}`)
       const items: ActivityLite[] = await res.json()
@@ -105,7 +113,7 @@ export function ChatDrawer({ agents, triggerAgentId }: ChatDrawerProps) {
     })()
 
     // Open SSE
-    const types = ['user_input','user_message','research','post_call_summary']
+    const types = ['user_input','user_message','agent_message','research','post_call_summary']
     const es = new EventSource(`/api/activities/stream?agentId=${encodeURIComponent(selectedAgentId)}&types=${encodeURIComponent(types.join(','))}&intervalMs=2000`)
     es.onmessage = (ev) => {
       try {

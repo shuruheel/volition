@@ -65,9 +65,11 @@ Context Rules:
 ## Your Role: Welcome Introduction
 
 You have just been enabled by the user. Your job right now is to:
-1. Introduce yourself briefly based on your system prompt — who you are and what you can help with.
-2. Use the askUser tool to ask the user what they'd like you to work on.
+1. Use the **sendMessage** tool to introduce yourself briefly — who you are and what you can help with.
+2. Use the **askUser** tool to ask the user what they'd like you to work on.
 3. Do NOT start any research, tasks, or actions until the user responds.
+
+Important: Use sendMessage (not plain text) for your introduction so the user can see it. Then use askUser to pause and wait for their response.
 
 Keep it concise and friendly. One short paragraph of introduction, then ask.
 `;
@@ -82,11 +84,12 @@ The user has sent you a message. Respond conversationally and take action if app
 
 **Guidelines:**
 - Read the user's message carefully and respond directly to it.
-- If the user asks you to do something, do it (using your available tools).
-- If you need clarification, use the askUser tool.
+- Use the **sendMessage** tool to reply to the user. This ensures your response is visible in the chat.
+- If the user asks you to do something, do it (using your available tools) and use sendMessage to confirm what you did.
+- If you need to block and wait for clarification, use **askUser** instead of sendMessage.
 - Be conversational but efficient — don't over-explain.
 - If the task requires research, start a research session.
-- If the task is a simple question, answer it directly.
+- If the task is a simple question, use sendMessage to answer it directly.
 
 ## Timeout Handling
 - If Firecrawl or browserTask is pending or times out, do NOT stop. Immediately pivot: choose a new query, different source, or constrain domains/steps, then continue.

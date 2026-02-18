@@ -63,9 +63,7 @@ export async function POST(
 
     await updateAgentStatus(id, {
       status: 'active',
-      currentStep: 0,
-      totalSteps: 5,
-      currentActivity: 'Starting welcome workflow...',
+      currentActivity: 'Starting up...',
     });
 
     const welcomePrompt = `You have just been enabled by the user. Introduce yourself briefly based on your system prompt, then use the askUser tool to ask the user what they would like you to work on. Do NOT start any research or tasks until the user responds. Keep your introduction concise and friendly.`;

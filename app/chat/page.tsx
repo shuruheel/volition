@@ -53,7 +53,7 @@ export default function ChatPage() {
     let mounted = true
 
     const load = async () => {
-      const types = ['user_input','user_message','post_call_summary']
+      const types = ['user_input','user_message','agent_message','post_call_summary']
       const params = new URLSearchParams({ agentId: selectedAgentId, types: types.join(','), limit: '100' })
       const res = await fetch(`/api/activities?${params.toString()}`)
       const items = await res.json()
@@ -76,7 +76,11 @@ export default function ChatPage() {
           if (a.type === 'user_message') {
             return [{ id: a.id, role: 'user', content: a.payload?.content || '', timestamp: new Date(a.created_at) }]
           }
-          // Map other agent notifications as agent messages (read-only)
+          if (a.type === 'agent_message') {
+            const content = a.payload?.content || ''
+            if (!content) return []
+            return [{ id: a.id, role: 'agent' as const, content, timestamp: new Date(a.created_at) }]
+          }
           // show research only when flagged as chat acknowledgement
           if (a.type === 'research' && a.payload?.chatAck) {
             const content = a.payload?.content || 'Okay, proceeding.'
@@ -121,16 +125,11 @@ export default function ChatPage() {
         })
         await fetch(`/api/activities/${latest.id}/approve`, { method: 'POST' })
       } else {
-        // Else, store as standalone user_message
-        await fetch('/api/activities', {
+        // Send as a chat message (stores + triggers workflow if agent is enabled)
+        await fetch(`/api/agents/${selectedAgentId}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            agent_id: selectedAgentId,
-            type: 'user_message',
-            status: 'completed',
-            payload: { content },
-          }),
+          body: JSON.stringify({ content }),
         })
       }
     } finally {

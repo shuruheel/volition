@@ -95,9 +95,7 @@ export async function agentTaskWorkflow(
   // Initialize agent status
   await updateAgentStatusStep(agentId, {
     status: 'active',
-    currentStep: 0,
-    totalSteps: maxSteps,
-    currentActivity: 'Starting workflow...',
+    currentActivity: 'Starting up...',
   });
 
   try {
@@ -114,9 +112,7 @@ export async function agentTaskWorkflow(
 
       await updateAgentStatusStep(agentId, {
         status: 'active',
-        currentStep: currentStep + 1,
-        totalSteps: maxSteps,
-        currentActivity: `Step ${currentStep + 1}/${maxSteps}`,
+        currentActivity: 'Processing...',
       });
 
       // Execute one LLM decision inside a step (tools are defined in the step)

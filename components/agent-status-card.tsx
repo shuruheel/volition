@@ -129,26 +129,6 @@ export function AgentStatusCard({ agentId, refreshInterval = 2000 }: AgentStatus
           </div>
         )}
 
-        {/* Progress */}
-        {status.status === 'active' && status.totalSteps > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-xs text-muted-foreground">Progress</p>
-              <p className="text-xs font-medium">
-                {status.currentStep} / {status.totalSteps}
-              </p>
-            </div>
-            <div className="w-full bg-muted rounded-full h-2">
-              <div
-                className="bg-primary h-2 rounded-full transition-all duration-300"
-                style={{
-                  width: `${(status.currentStep / status.totalSteps) * 100}%`,
-                }}
-              />
-            </div>
-          </div>
-        )}
-
         {/* Idle State */}
         {status.status === 'idle' && !status.currentActivity && (
           <p className="text-sm text-muted-foreground">
