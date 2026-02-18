@@ -1,13 +1,12 @@
 /**
- * Workflow steps - reusable durable units of work
- * Each step is marked with 'use step' for automatic retries and durability
+ * Workflow steps — reusable async functions for agent execution.
+ * HITL tools (askUser, sendEmail, createCalendarEvent) set awaitingHumanInput
+ * which causes the workflow to exit cleanly and resume on approval.
  */
 
 import { sql } from '@/lib/db';
 import { getLastChatTurns, hasPendingUserInput } from '../chat-history';
 import { getRecentResearchContext, getRecentMemoriesContext } from '../research-context';
-import { userInputHook, phoneCallHook, emailApprovalHook, activityApprovalHook } from './hooks';
-import { getStepMetadata } from 'workflow';
 
 /**
  * Plan research queries by decomposing a topic into focused search queries,
@@ -21,7 +20,6 @@ export async function planResearchQueriesStep(
   modelProvider?: string | null,
   modelId?: string | null
 ): Promise<{ queries: string[]; existingResearch?: string }> {
-  'use step';
 
   const { searchMemories } = await import('@/lib/integrations/supermemory');
 
@@ -124,7 +122,6 @@ Return a JSON object with a "queries" array containing 3-5 search query strings.
  * Execute a research step: search, scrape, and store content
  */
 export async function executeResearchStep(agentId: string, query: string, sessionId: string, userId?: string | null) {
-  'use step';
 
   const { searchAndScrape, resolveFirecrawlKey } = await import('@/lib/integrations/firecrawl');
   const { storeMarkdown, searchMemories } = await import('@/lib/integrations/supermemory');
@@ -189,7 +186,6 @@ export async function executeResearchStep(agentId: string, query: string, sessio
  * Execute a browser automation task
  */
 export async function executeBrowserStep(agentId: string, task: string, maxSteps?: number, userId?: string | null) {
-  'use step';
 
   // Browser automation using Browser-Use SDK
   const { BrowserUseClient } = await import('browser-use-sdk');
@@ -203,13 +199,12 @@ export async function executeBrowserStep(agentId: string, task: string, maxSteps
   const browserClient = new BrowserUseClient({ apiKey });
   
   try {
-    const { stepId } = getStepMetadata();
+    const idempotencyKey = crypto.randomUUID();
 
     const browserTask = await browserClient.tasks.createTask({
       task,
       maxSteps: maxSteps ?? 10,
-      // Attach idempotency metadata if supported by provider (no-op if ignored)
-      metadata: { idempotencyKey: stepId },
+      metadata: { idempotencyKey },
     });
     
     const result = await browserTask.complete();
@@ -237,8 +232,7 @@ export async function logActivityStep(
   payload: any,
   status: string = 'completed'
 ) {
-  'use step';
-  
+
   // Ensure payload is never null/undefined (DB constraint requires non-null)
   const safePayload = payload || {};
   
@@ -252,8 +246,7 @@ export async function logActivityStep(
  * Start a research session
  */
 export async function startResearchSessionStep(agentId: string, title: string) {
-  'use step';
-  
+
   const payload = {
     title,
     queries: [] as string[],
@@ -281,8 +274,7 @@ export async function appendToSessionStep(
   links: string[], 
   notes: string[]
 ) {
-  'use step';
-  
+
   const [row] = await sql<any[]>`
     SELECT payload FROM activities WHERE id = ${sessionId}
   `;
@@ -312,8 +304,7 @@ export async function appendToSessionStep(
  * Complete a research session
  */
 export async function completeResearchSessionStep(sessionId: string, summary: string) {
-  'use step';
-  
+
   const [row] = await sql<any[]>`
     SELECT payload FROM activities WHERE id = ${sessionId}
   `;
@@ -339,8 +330,7 @@ export async function completeResearchSessionStep(sessionId: string, summary: st
  * This is used as a fallback when workflow ends without explicit completion
  */
 export async function autoCompleteResearchSessionStep(sessionId: string) {
-  'use step';
-  
+
   const [row] = await sql<any[]>`
     SELECT payload, status FROM activities WHERE id = ${sessionId}
   `;
@@ -372,8 +362,7 @@ export async function autoCompleteResearchSessionStep(sessionId: string) {
  * Fetch agent from database
  */
 export async function fetchAgentStep(agentId: string) {
-  'use step';
-  
+
   const agents = await sql<any[]>`SELECT * FROM agents WHERE id = ${agentId}`;
   return agents[0] || null;
 }
@@ -387,8 +376,7 @@ export async function createPendingActivityStep(
   priority: string,
   payload: any
 ) {
-  'use step';
-  
+
   const result = await sql<any[]>`
     INSERT INTO activities (agent_id, type, status, priority, payload)
     VALUES (${agentId}, ${type}, 'pending', ${priority}, ${JSON.stringify(payload)})
@@ -406,8 +394,7 @@ export async function updateActivityStatusStep(
   status: string,
   additionalPayload?: any
 ) {
-  'use step';
-  
+
   if (additionalPayload) {
     await sql`
       UPDATE activities
@@ -431,8 +418,7 @@ export async function updateAgentDBStatusStep(
   agentId: string,
   status: string
 ) {
-  'use step';
-  
+
   await sql`
     UPDATE agents
     SET status = ${status}, updated_at = NOW()
@@ -444,7 +430,6 @@ export async function updateAgentDBStatusStep(
  * Get chat history and context for agent
  */
 export async function getAgentContextStep(agentId: string, historyLimit: number = 20, contextLimit: number = 5, userId?: string | null) {
-  'use step';
 
   const history = await getLastChatTurns(agentId, historyLimit);
   const researchContext = await getRecentResearchContext(agentId, contextLimit);
@@ -475,8 +460,7 @@ export async function updateAgentStatusStep(agentId: string, update: {
   currentActivity?: string | null;
   currentTool?: string | null;
 }) {
-  'use step';
-  
+
   try {
     await sql`
       INSERT INTO agent_status (agent_id, status, current_step, total_steps, current_activity, current_tool)
@@ -506,8 +490,7 @@ export async function updateAgentStatusStep(agentId: string, update: {
  * Clear agent status (set to idle)
  */
 export async function clearAgentStatusStep(agentId: string) {
-  'use step';
-  
+
   await updateAgentStatusStep(agentId, {
     status: 'idle',
     currentStep: 0,
@@ -522,7 +505,6 @@ export async function clearAgentStatusStep(agentId: string) {
  * Used at the start of each workflow loop iteration for graceful shutdown.
  */
 export async function checkAgentEnabledStep(agentId: string): Promise<boolean> {
-  'use step';
 
   const rows = await sql<any[]>`SELECT enabled FROM agents WHERE id = ${agentId}`;
   if (rows.length === 0) return false;
@@ -547,11 +529,11 @@ export async function executeLLMDecisionStep(args: {
   currentSessionId: string | null;
   researchStarted: boolean;
 }) {
-  'use step';
 
   const { agentId, userId, systemPrompt, history, researchContext, memoryContext, userPrompt } = args;
   let { currentSessionId, researchStarted } = args;
   let researchSessionCompleted = false;
+  let awaitingHumanInput = false;
 
   // Resolve provider config (supports OpenAI, Anthropic, etc.)
   const { resolveProviderConfig, createProvider } = await import('@/lib/ai/providers');
@@ -1085,7 +1067,7 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'askUser': {
-          const activityId = await createPendingActivityStep(
+          await createPendingActivityStep(
             agentId,
             'user_input',
             args.priority || 'medium',
@@ -1098,43 +1080,8 @@ export async function executeLLMDecisionStep(args: {
             currentTool: 'askUser',
           });
 
-          // Token must match the format used by the approve route: agent-{id}-activity-{id}
-          const token = `agent-${agentId}-activity-${activityId}`;
-          
-          // Check if activity is already approved (in case of replay)
-          const [existingActivity] = await sql<any[]>`
-            SELECT status, payload FROM activities WHERE id = ${activityId}
-          `;
-          
-          if (existingActivity?.status === 'approved' && existingActivity?.payload?.answer) {
-            // Already answered, return existing answer
-            result = { success: true, answer: existingActivity.payload.answer };
-          } else {
-            // Wait for user input via hook
-            try {
-              const events = userInputHook.create({ token });
-              for await (const event of events) {
-                await updateActivityStatusStep(event.activityId, 'approved', { answer: event.answer });
-                result = { success: true, answer: event.answer };
-                break;
-              }
-            } catch (error: any) {
-              // Handle MessageNotFoundError - message was already consumed, check activity status
-              if (error?.name === 'MessageNotFoundError' || error?.message?.includes('not found')) {
-                const [recheckActivity] = await sql<any[]>`
-                  SELECT status, payload FROM activities WHERE id = ${activityId}
-                `;
-                if (recheckActivity?.status === 'approved' && recheckActivity?.payload?.answer) {
-                  result = { success: true, answer: recheckActivity.payload.answer };
-                } else {
-                  // Still pending, might be a transient error
-                  result = { success: false, error: 'Failed to receive user input, please retry' };
-                }
-              } else {
-                throw error;
-              }
-            }
-          }
+          awaitingHumanInput = true;
+          result = { success: true, message: 'Question posted, workflow pausing.' };
           break;
         }
         case 'browserTask': {
@@ -1142,8 +1089,8 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'sendEmail': {
-          // HITL: require approval before sending
-          const emailActivityId = await createPendingActivityStep(
+          // HITL: create pending activity for approval, then pause
+          await createPendingActivityStep(
             agentId,
             'email_sent',
             'high',
@@ -1156,33 +1103,8 @@ export async function executeLLMDecisionStep(args: {
             currentTool: 'sendEmail',
           });
 
-          const emailToken = `agent-${agentId}-activity-${emailActivityId}`;
-
-          try {
-            const emailEvents = emailApprovalHook.create({ token: emailToken });
-            for await (const event of emailEvents) {
-              if (event.approved) {
-                const { sendEmail: gmailSend } = await import('@/lib/integrations/google');
-                if (!userId) throw new Error('User authentication required for this operation');
-                const toolUserId = userId;
-                const emailResult = await gmailSend(toolUserId, {
-                  to: args.to,
-                  subject: args.subject,
-                  body: args.body,
-                  cc: args.cc,
-                  bcc: args.bcc,
-                });
-                await updateActivityStatusStep(emailActivityId, 'approved');
-                result = { success: true, ...emailResult };
-              } else {
-                await updateActivityStatusStep(emailActivityId, 'rejected');
-                result = { success: false, error: 'Email sending was rejected by user' };
-              }
-              break;
-            }
-          } catch (error: any) {
-            result = { success: false, error: error?.message || 'Failed to get email approval' };
-          }
+          awaitingHumanInput = true;
+          result = { success: true, message: 'Email queued for approval.' };
           break;
         }
         case 'searchEmails': {
@@ -1201,12 +1123,12 @@ export async function executeLLMDecisionStep(args: {
           break;
         }
         case 'createCalendarEvent': {
-          // HITL: require approval before creating event
-          const calActivityId = await createPendingActivityStep(
+          // HITL: create pending activity for approval, then pause
+          await createPendingActivityStep(
             agentId,
             'calendar_event_added',
             'high',
-            { summary: args.summary, start: args.start, end: args.end, description: args.description, attendees: args.attendees }
+            { summary: args.summary, start: args.start, end: args.end, description: args.description, location: args.location, attendees: args.attendees }
           );
 
           await updateAgentStatusStep(agentId, {
@@ -1215,34 +1137,8 @@ export async function executeLLMDecisionStep(args: {
             currentTool: 'createCalendarEvent',
           });
 
-          const calToken = `agent-${agentId}-activity-${calActivityId}`;
-
-          try {
-            const calEvents = activityApprovalHook.create({ token: calToken });
-            for await (const event of calEvents) {
-              if (event.approved) {
-                const { createCalendarEvent: gcalCreate } = await import('@/lib/integrations/google');
-                if (!userId) throw new Error('User authentication required for this operation');
-                const toolUserId = userId;
-                const calResult = await gcalCreate(toolUserId, {
-                  summary: args.summary,
-                  start: args.start,
-                  end: args.end,
-                  description: args.description,
-                  location: args.location,
-                  attendees: args.attendees,
-                });
-                await updateActivityStatusStep(calActivityId, 'approved');
-                result = { success: true, ...calResult };
-              } else {
-                await updateActivityStatusStep(calActivityId, 'rejected');
-                result = { success: false, error: 'Calendar event creation was rejected by user' };
-              }
-              break;
-            }
-          } catch (error: any) {
-            result = { success: false, error: error?.message || 'Failed to get calendar event approval' };
-          }
+          awaitingHumanInput = true;
+          result = { success: true, message: 'Calendar event queued for approval.' };
           break;
         }
         case 'listCalendarEvents': {
@@ -1429,6 +1325,9 @@ export async function executeLLMDecisionStep(args: {
     
     // Add all tool results to conversation
     conversationMessages.push(...toolResults);
+
+    // If any tool signaled HITL pause, break out of the multi-turn loop
+    if (awaitingHumanInput) break;
   }
 
   // Auto-persist final LLM text as agent_message if sendMessage wasn't explicitly used
@@ -1446,6 +1345,7 @@ export async function executeLLMDecisionStep(args: {
     currentSessionId,
     researchStarted,
     researchSessionCompleted,
+    awaitingHumanInput,
   };
 }
 
@@ -1457,7 +1357,6 @@ export async function loadMemoryContextStep(
   userId: string | null,
   agentId: string
 ): Promise<{ soulMd: string | null; preferencesMd: string | null }> {
-  'use step';
 
   if (!userId) {
     return { soulMd: null, preferencesMd: null };
@@ -1486,7 +1385,6 @@ export async function validateToolConfigsStep(
   userId: string | null,
   enabledTools: string[]
 ): Promise<{ valid: boolean; missing: string[] }> {
-  'use step';
 
   if (!userId || enabledTools.length === 0) {
     return { valid: true, missing: [] };

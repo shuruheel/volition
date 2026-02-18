@@ -1,12 +1,12 @@
 /**
- * Main agent workflow using Vercel Workflow for durable, resumable execution
- * Replaces executeAgentTask() with workflow directives
+ * Main agent workflow — plain async execution with event-driven HITL.
  *
- * IMPORTANT: This workflow defines tools INLINE with 'parameters' key.
- * DO NOT import tools from lib/ai/tools/ - those use AI SDK tool() helper
- * which is incompatible with Vercel Workflow tool format.
+ * Tools are defined INLINE with 'parameters' key (raw OpenAI function call format).
+ * DO NOT import tools from lib/ai/tools/ — those use AI SDK tool() helper.
  *
- * See docs/workflow-vs-legacy-tools.md for detailed explanation.
+ * HITL pattern: when the agent calls askUser/sendEmail/createCalendarEvent,
+ * a pending activity is created and the workflow returns early. The approve
+ * route executes the action and triggers a NEW workflow run.
  */
 
 import { withHITLGuidelines, withSkills, withMemoryContext, type TriggerType } from '../prompts';
@@ -30,7 +30,6 @@ export async function agentTaskWorkflow(
   maxSteps: number = 20,
   triggerType: TriggerType = 'task'
 ) {
-  'use workflow';
 
   console.log(`[Workflow] Starting agent ${agentId} (trigger: ${triggerType}) with prompt: ${initialPrompt}`);
 
@@ -134,6 +133,19 @@ export async function agentTaskWorkflow(
 
       // Increment step counter FIRST (this step just completed)
       currentStep++;
+
+      // If a HITL tool was called, the workflow should exit cleanly.
+      // A new workflow run will be triggered when the user responds/approves.
+      if (result.awaitingHumanInput) {
+        console.log(`[Workflow] Agent ${agentId} awaiting human input, pausing workflow`);
+        return {
+          completed: false,
+          awaitingHumanInput: true,
+          steps: currentStep,
+          agentId,
+          triggerType,
+        };
+      }
 
       // Sync state updates from step
       currentSessionId = result.currentSessionId;

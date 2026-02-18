@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Volition — open-source AI agent orchestration platform built with Next.js 16, Vercel Workflow, and Neon Postgres. Multi-user SaaS with Google OAuth authentication, heartbeat scheduling, multi-provider LLM support (OpenAI + Anthropic), Google Drive agent memory, skills system, and sub-agent spawning. Integrated tools: Firecrawl (web research), Supermemory (graph memory), Google APIs (Gmail + Calendar + Drive), Telegram (bot messaging), Browser-Use Cloud (browser automation), and Twilio (voice calls).
+Volition — open-source AI agent orchestration platform built with Next.js 16 and Neon Postgres. Multi-user SaaS with Google OAuth authentication, heartbeat scheduling, multi-provider LLM support (OpenAI + Anthropic), Google Drive agent memory, skills system, and sub-agent spawning. Integrated tools: Firecrawl (web research), Supermemory (graph memory), Google APIs (Gmail + Calendar + Drive), Telegram (bot messaging), Browser-Use Cloud (browser automation), and Twilio (voice calls).
 
 ## Development Commands
 
@@ -23,19 +23,21 @@ No test framework is configured yet. Verify changes manually via `pnpm dev` and 
 
 ### Core Stack
 - **Runtime**: Next.js 16 (App Router, RSC), React 19.2.0
-- **Agent Execution**: Vercel Workflow (`'use workflow'` / `'use step'` directives) for durable, resumable agent execution
+- **Agent Execution**: Plain async functions with `waitUntil` from `@vercel/functions` for background execution, event-driven HITL
 - **AI**: Multi-provider via `lib/ai/providers/` — OpenAI (GPT-5.2, o3) and Anthropic (Claude Sonnet 4.5, Opus 4.6) with per-agent model selection
 - **Database**: Neon Postgres (serverless). Requires `DATABASE_URL` environment variable.
 - **Auth**: NextAuth.js v5 (beta) with Google OAuth provider, JWT sessions. `lib/auth.ts` (full config), `lib/auth.config.ts` (edge-safe for middleware).
 - **Styling**: Tailwind CSS 4, shadcn/ui (New York style, RSC-enabled)
 
-### Agent Execution: Vercel Workflow
+### Agent Execution Engine
 
-The execution engine is in `lib/ai/workflows/`:
+The execution engine is in `lib/ai/workflows/` and `lib/agent-runner.ts`:
 
-- **`agent-workflow.ts`**: Main workflow function using `'use workflow'` directive. Runs a step loop (max 20 steps) where each step is one LLM decision cycle with tool calling. Injects skills and memory context into system prompts.
-- **`steps.ts`**: Reusable durable steps marked with `'use step'`. Each step gets automatic retries and durability. Key steps: `executeLLMDecisionStep`, `fetchAgentStep`, `planResearchQueriesStep`, `executeResearchStep`, `executeBrowserStep`, `logActivityStep`. All workflow tool definitions (research, email, calendar, telegram, browser, memory, sub-agents) are inline here.
-- **`hooks.ts`**: Human-in-the-loop hooks using `defineHook()` from `workflow`. Hooks pause the workflow until an external event resumes it: `userInputHook`, `phoneCallHook`, `emailApprovalHook`, `activityApprovalHook`.
+- **`agent-runner.ts`**: Background execution helper. `runAgentInBackground()` launches `agentTaskWorkflow` as a detached promise via `waitUntil` from `@vercel/functions`, letting the HTTP response return immediately.
+- **`agent-workflow.ts`**: Main workflow function (plain async). Runs a step loop (max 20 steps) where each step is one LLM decision cycle with tool calling. Injects skills and memory context into system prompts. Exits early when `awaitingHumanInput` is set.
+- **`steps.ts`**: Reusable async step functions. Key functions: `executeLLMDecisionStep`, `fetchAgentStep`, `planResearchQueriesStep`, `executeResearchStep`, `executeBrowserStep`, `logActivityStep`. All workflow tool definitions (research, email, calendar, telegram, browser, memory, sub-agents) are inline here.
+
+**HITL pattern (event-driven)**: When the agent calls `askUser`, `sendEmail`, or `createCalendarEvent`, the step creates a pending activity, sets `awaitingHumanInput = true`, and the workflow exits cleanly. The approve route executes the action (e.g., actually sends the email) and triggers a NEW workflow run via `runAgentInBackground`. Rejection sets the agent to idle with no continuation.
 
 **Critical**: Tools inside workflows are defined as **raw OpenAI function call format** (JSON Schema with `parameters` key), NOT using the AI SDK `tool()` helper.
 
@@ -61,8 +63,7 @@ Skills are enabled per-agent via `skills TEXT[]` column on agents table.
 
 ### Configuration
 
-- `next.config.mjs`: Wrapped with `withWorkflow()` from `workflow/next`
-- `tsconfig.json`: Includes `"workflow"` plugin alongside `"next"` plugin
+- `next.config.mjs`: Plain Next.js config (no wrappers)
 - `typescript.ignoreBuildErrors: true` in next config
 - `vercel.json`: Cron job (`* * * * *`) for `/api/scheduler/tick`
 - `proxy.ts`: NextAuth proxy (Next.js 16) protecting all routes except `/`, `/api/auth`, `/login`, `/api/twilio`, `/api/telegram`, `/api/scheduler`
@@ -128,10 +129,9 @@ lib/
 │   │   ├── types.ts       # LLMProvider interface
 │   │   ├── openai.ts      # OpenAI provider
 │   │   └── anthropic.ts   # Anthropic provider (format conversion)
-│   ├── workflows/         # Vercel Workflow (primary execution engine)
-│   │   ├── agent-workflow.ts
-│   │   ├── steps.ts       # ~1300 lines, all tools + step logic
-│   │   └── hooks.ts
+│   ├── workflows/         # Agent execution engine (plain async + event-driven HITL)
+│   │   ├── agent-workflow.ts  # Main workflow loop
+│   │   └── steps.ts       # ~1300 lines, all tools + step logic
 │   ├── prompts.ts         # System prompt helpers (withHITLGuidelines, withSkills, withMemoryContext)
 │   ├── chat-history.ts    # Chat turn retrieval
 │   ├── research-context.ts # Research session context builder
@@ -147,6 +147,7 @@ lib/
 │   └── registry.ts        # 6 built-in skills
 ├── scheduler/
 │   └── heartbeat.ts       # Process overdue agent schedules
+├── agent-runner.ts        # Background execution via waitUntil
 ├── auth.ts                # NextAuth.js v5 config (full, server-only)
 ├── auth.config.ts         # NextAuth.js config (edge-safe, for middleware)
 ├── db.ts                  # Neon Postgres client, TypeScript types
@@ -218,8 +219,9 @@ Prefixes: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`. Keep subjects under 8
 
 - **WebSocket**: `app/api/twilio/stream/route.ts` is a stub — Next.js Route Handlers don't support WebSocket upgrades.
 - **Spend tracking**: Total Spend metric is mocked at $0.
-- **Workflow tool format**: Workflow tools must use raw OpenAI JSON Schema format. Do NOT use AI SDK `tool()` helper in workflow files.
+- **Tool format**: Workflow tools must use raw OpenAI JSON Schema format. Do NOT use AI SDK `tool()` helper in workflow files.
 - **Auth config split**: `proxy.ts` uses `lib/auth.config.ts` (lightweight). API routes use `lib/auth.ts` (full, server-only). Never mix them.
+- **HITL is event-driven**: `askUser`/`sendEmail`/`createCalendarEvent` create pending activities and exit the workflow. The approve route executes the action and triggers a new run. No hooks or pausing.
 
 ## Supplemental Docs
 

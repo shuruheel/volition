@@ -43,9 +43,8 @@ export async function processOverdueSchedules(): Promise<number> {
       const prompt = buildHeartbeatPrompt(schedule.checklist);
 
       // Start the workflow (10 steps — heartbeats should be quick check-ins)
-      const { start } = await import('workflow/api');
-      const { agentTaskWorkflow } = await import('@/lib/ai/workflows/agent-workflow');
-      await start(agentTaskWorkflow, [schedule.agent_id, prompt, 10, 'heartbeat']);
+      const { runAgentInBackground } = await import('@/lib/agent-runner');
+      runAgentInBackground(schedule.agent_id, prompt, 10, 'heartbeat');
 
       // Update schedule timestamps
       const nextRun = calculateNextRun(schedule);

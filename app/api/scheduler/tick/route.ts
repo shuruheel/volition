@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processOverdueSchedules } from '@/lib/scheduler/heartbeat';
 
+export const maxDuration = 300;
+
 /**
  * POST /api/scheduler/tick
  * Called by Vercel Cron (production) or local interval (dev).

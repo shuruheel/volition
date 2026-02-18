@@ -2,7 +2,7 @@
 
 An open-source AI agent orchestration platform. Create persistent agents that research, email, schedule, and take action on your behalf — with human-in-the-loop approval for every sensitive action.
 
-Built with Next.js 16, Vercel Workflow, Neon Postgres, and multi-provider LLM support (OpenAI + Anthropic).
+Built with Next.js 16, Neon Postgres, and multi-provider LLM support (OpenAI + Anthropic).
 
 ## Why Volition
 
@@ -11,8 +11,7 @@ Most agent frameworks focus on chain-of-thought execution but ignore the hard pa
 Volition solves all three with a visual, web-native platform that non-engineers can use:
 
 - **Persistent Agents** — Enable an agent and it stays on duty, listening for chat messages, running heartbeat check-ins, and acting autonomously until you disable it
-- **Durable Execution** — Vercel Workflow with `'use workflow'` / `'use step'` directives gives each agent step automatic retries and resumability
-- **Human-in-the-Loop** — Workflow hooks pause execution for user approval before sensitive actions (emails, calendar events, phone calls)
+- **Human-in-the-Loop** — Event-driven approval system pauses execution for user approval before sensitive actions (emails, calendar events, phone calls), then resumes in a new run
 - **Dynamic Memory** — Google Drive files (any `.md` file — soul.md, preferences.md, project-notes.md) + Supermemory semantic search across all memory files
 - **Background Agents** — Heartbeat scheduler runs agents on configurable intervals with checklist-driven tasks
 - **Multi-Provider LLM** — OpenAI (GPT-5.2, o3) and Anthropic (Claude Sonnet 4.5, Opus 4.6) with per-agent model selection and per-user encrypted API keys
@@ -74,13 +73,13 @@ Sensitive actions require your approval before execution:
 | Google OAuth authentication | Stable |
 | Multi-user data isolation + ownership checks | Stable |
 | Agent CRUD + enable/disable lifecycle | Stable |
-| Durable workflow execution (Vercel Workflow) | Stable |
+| Async workflow execution with background runs | Stable |
 | Trigger-aware prompts (welcome/chat/heartbeat/manual) | Stable |
 | Web research (Firecrawl search + scrape) | Stable |
 | Semantic memory search (Supermemory) | Stable |
 | Dynamic memory files (create any .md file) | Stable |
 | Memory append mode (incremental writes) | Stable |
-| Human-in-the-loop approval hooks | Stable |
+| Human-in-the-loop event-driven approvals | Stable |
 | Activity feed + real-time metrics (SSE) | Stable |
 | Per-user encrypted API keys (AES-GCM) for all integrations | Stable |
 | Chat interface with chat-triggered workflows | Stable |
@@ -104,10 +103,10 @@ Sensitive actions require your approval before execution:
 Next.js 16 App Router
 ├── Dashboard UI (React 19, Tailwind CSS 4, shadcn/ui)
 ├── API Routes (REST endpoints, 40+, all with ownership checks)
-├── Vercel Workflow Engine
-│   ├── agent-workflow.ts    — Main workflow loop ('use workflow')
-│   ├── steps.ts             — Durable steps ('use step') + 17 inline tool definitions
-│   └── hooks.ts             — HITL hooks (defineHook) for approval flows
+├── Agent Execution Engine (plain async + event-driven HITL)
+│   ├── agent-workflow.ts    — Main workflow loop (async function)
+│   ├── steps.ts             — Step functions + 17 inline tool definitions
+│   └── agent-runner.ts      — Background execution via waitUntil
 ├── LLM Providers (per-user encrypted API keys)
 │   ├── OpenAI               — GPT-5.2, o3, o4-mini, GPT-4.1
 │   └── Anthropic            — Claude Sonnet 4.5, Opus 4.6, Haiku 4.5

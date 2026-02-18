@@ -1,6 +1,6 @@
 # Volition v2 Readiness Review
 
-Last updated: 2026-02-17 (v4)
+Last updated: 2026-02-18 (v5)
 
 ---
 
@@ -41,9 +41,9 @@ Click **Enable** on an agent card. This calls `/api/agents/[id]/start` which:
 
 1. Sets `enabled = true` on the agent
 2. Creates a default 60-minute heartbeat schedule (if none exists), or re-enables a disabled one
-3. Launches a **welcome workflow** (5 steps max, `triggerType: 'welcome'`)
+3. Launches a **welcome workflow** in the background via `runAgentInBackground` (5 steps max, `triggerType: 'welcome'`)
 
-The welcome workflow introduces the agent and uses `askUser` to ask what the user wants done. The agent does NOT start tasks or research until the user responds. After the welcome workflow completes, the agent goes to **idle** but stays **enabled** — it's now "listening" for chat messages or heartbeat triggers.
+The welcome workflow introduces the agent and uses `askUser` to ask what the user wants done. When `askUser` is called, a pending activity is created and the workflow exits cleanly. The agent does NOT start tasks or research until the user responds. When the user answers, the approve route triggers a new workflow continuation. After the workflow completes, the agent goes to **idle** but stays **enabled** — it's now "listening" for chat messages or heartbeat triggers.
 
 ### 8. Chat with an Enabled Agent
 
@@ -51,7 +51,7 @@ When the user sends a message in the chat drawer, it calls `/api/agents/[id]/cha
 
 1. Stores the `user_message` activity
 2. Checks if the agent is `enabled = true` and `status != 'active'`
-3. If yes, atomically claims the agent (using `WHERE status = 'idle' RETURNING *` to prevent race conditions) and starts a **chat workflow** (10 steps max, `triggerType: 'chat'`)
+3. If yes, atomically claims the agent (using `WHERE status = 'idle' RETURNING *` to prevent race conditions) and starts a **chat workflow** in the background via `runAgentInBackground` (10 steps max, `triggerType: 'chat'`)
 4. If the agent is busy (already running), the message is stored and the running workflow will see it in context
 5. If the agent is disabled, the message is stored but no workflow triggers
 
@@ -59,7 +59,7 @@ The chat workflow uses a conversational prompt focused on responding to the user
 
 ### 9. Heartbeat (Background Check-ins)
 
-Enabled agents with schedules run automatically. Vercel Cron hits `/api/scheduler/tick` every minute. The scheduler queries `agent_schedules` for overdue agents where **both** `agent_schedules.enabled = true` AND `agents.enabled = true`, then starts **heartbeat workflows** (10 steps max, `triggerType: 'heartbeat'`).
+Enabled agents with schedules run automatically. Vercel Cron hits `/api/scheduler/tick` every minute. The scheduler queries `agent_schedules` for overdue agents where **both** `agent_schedules.enabled = true` AND `agents.enabled = true`, then starts **heartbeat workflows** in the background via `runAgentInBackground` (10 steps max, `triggerType: 'heartbeat'`).
 
 Heartbeat prompts are decision-oriented: "Review your checklist, decide what needs attention RIGHT NOW. If nothing is due, report all clear and stop." This prevents heartbeats from ballooning into full research sessions.
 
@@ -121,7 +121,7 @@ The system prompt adapts to how the workflow was triggered:
 | `heartbeat` | 10 | Quick check-in. Review checklist, only act if needed. Default to stop. |
 | `manual` | 20 | Full continuous research agent. Plan queries, gather, analyze, repeat. |
 
-All four variants share the same HITL approval core (createPendingActivity for emails/calls/calendar, askUser for clarification). The difference is in the agent's role framing and expected behavior.
+All four variants share the same event-driven HITL core (createPendingActivity for emails/calls/calendar, askUser for clarification → workflow exits → approve route triggers continuation). The difference is in the agent's role framing and expected behavior.
 
 ---
 
@@ -145,7 +145,7 @@ Volition's enable/disable model was inspired by OpenClaw's persistent agent appr
 | **Deployment** | Local daemon (single-user) | Hosted web app (multi-user SaaS) | Different target audience — Volition aims at teams and non-technical users |
 | **Per-agent enable/disable** | No first-class toggle. Remove from config to disable. | `enabled` boolean column with UI toggle | Web app needs explicit per-agent control without editing config files |
 | **Welcome workflow** | No concept — agents are config entries, not interactive entities | Agent introduces itself and asks what user wants | Creates a more natural "onboarding" moment when enabling an agent |
-| **Execution durability** | Stateless per-turn | Vercel Workflow with automatic retries and durable steps | Cloud deployment needs resilience to function timeouts |
+| **Execution durability** | Stateless per-turn | Plain async with `waitUntil` for background execution, event-driven HITL for resumability | Cloud deployment needs resilience to function timeouts |
 | **Graceful disable** | Kill the daemon | `checkAgentEnabledStep` checks at each loop iteration, exits cleanly | Can't kill a serverless function — need cooperative shutdown |
 | **Schedule storage** | File-based (`HEARTBEAT.md`, `jobs.json`) | Database tables (`agent_schedules`) | Multi-user SaaS needs shared persistent storage |
 | **Prompt adaptation** | Single prompt style; heartbeat vs chat distinguished by channel | Four `triggerType` variants with distinct prompt framing | Prevents heartbeats from behaving like research agents, prevents welcome from starting tasks |
@@ -194,9 +194,9 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 | Graceful mid-workflow disable | Ready | `checkAgentEnabledStep` in loop |
 | Multi-user data isolation | Ready | All routes have ownership checks (fixed in v4) |
 | API route authentication | Ready | All routes use `requireAgentOwnership` or `requireActivityOwnership` |
-| Workflow execution | Ready | Durable steps, trigger-type-aware step limits |
+| Workflow execution | Ready | Async execution via waitUntil, trigger-type-aware step limits |
 | Research pipeline | Ready | Plan queries -> Firecrawl -> Supermemory (public data only) |
-| HITL approval | Ready | Email and calendar require approval |
+| HITL approval | Ready | Event-driven: pending activity → approve route executes action → triggers new run |
 | Activity feed + SSE | Ready | Real-time updates, scoped to user |
 | Skills system | Ready | 6 built-in, injectable into prompts |
 | Agent templates | Ready | 5 pre-built configurations |
@@ -254,6 +254,19 @@ All integration points now resolve per-user keys from `tool_configs`. See the Pe
 
 ### Fixes Applied
 
+#### v5 (Remove Vercel Workflows — Plain Async + Event-Driven HITL)
+
+**Architecture change — removed `workflow` package entirely:**
+- **Deleted `lib/ai/workflows/hooks.ts`**: All 4 HITL hooks (`userInputHook`, `phoneCallHook`, `emailApprovalHook`, `activityApprovalHook`) removed. Event-driven pattern replaces hooks.
+- **Created `lib/agent-runner.ts`**: `runAgentInBackground()` launches `agentTaskWorkflow` as a detached promise via `waitUntil` from `@vercel/functions`. Replaces `start()` from `workflow/api`.
+- **Modified `lib/ai/workflows/agent-workflow.ts`**: Removed `'use workflow'` directive. Added `awaitingHumanInput` handling — when a HITL tool is called, the workflow returns early without clearing agent status.
+- **Modified `lib/ai/workflows/steps.ts`**: Removed all `'use step'` directives and `getStepMetadata` import. Rewrote `askUser`, `sendEmail`, `createCalendarEvent` handlers to create pending activities and set `awaitingHumanInput` flag instead of pausing via hooks.
+- **Rewritten `app/api/activities/[id]/approve/route.ts`**: Now executes the action (sends email, creates calendar event) and triggers a continuation workflow via `runAgentInBackground`.
+- **Rewritten `app/api/activities/[id]/reject/route.ts`**: Sets agent to idle and clears status. No continuation workflow on rejection.
+- **Updated start route, chat route, heartbeat**: All use `runAgentInBackground` instead of `start()` from `workflow/api`.
+- **Config cleanup**: Removed `withWorkflow()` from `next.config.mjs`, removed `workflow` plugin from `tsconfig.json`, removed `workflow` from `package.json`, added `@vercel/functions`, deleted `app/.well-known/workflow/` directory.
+- **Updated `lib/ai/prompts.ts`**: HITL guidelines now describe the event-driven pattern instead of hooks.
+
 #### v4 (Auth Fixes & Dynamic Memory)
 
 **Security auth fixes (3 remaining gaps closed):**
@@ -284,7 +297,7 @@ All integration points now resolve per-user keys from `tool_configs`. See the Pe
 - **Updated `storeMarkdown()` and `searchMemories()`**: Both functions accept `userId` and pass it to `resolveSupermemoryKey()`. All workflow call sites (`planResearchQueriesStep`, `executeResearchStep`, tool handlers) and the `/api/memories/search` route pass `userId` through.
 
 **Memory context auto-injection:**
-- **Added `loadMemoryContextStep()`**: New durable workflow step in `steps.ts` that loads `soul.md` and `preferences.md` from Google Drive via `readMemoryFile()`. Gracefully returns nulls if Drive is not configured or files don't exist.
+- **Added `loadMemoryContextStep()`**: New async step in `steps.ts` that loads `soul.md` and `preferences.md` from Google Drive via `readMemoryFile()`. Gracefully returns nulls if Drive is not configured or files don't exist.
 - **Wired up `withMemoryContext()`**: `agent-workflow.ts` now calls `loadMemoryContextStep()` after `getAgentContextStep()` and injects the results via `withMemoryContext()` into the system prompt. Prompt order: base -> HITL guidelines -> memory context -> skills. Agents now retain personality and learned preferences across workflow runs.
 
 **Per-user key resolution for all remaining integrations:**
@@ -503,6 +516,27 @@ This section tracks whether each external service correctly resolves per-user ke
 ---
 
 ## Files Created/Modified
+
+### New files (v5 — workflow removal):
+- `lib/agent-runner.ts` — Background execution helper using `waitUntil` from `@vercel/functions`
+
+### Deleted files (v5):
+- `lib/ai/workflows/hooks.ts` — All 4 HITL hooks removed (event-driven pattern replaces them)
+- `app/.well-known/workflow/` — Auto-generated Vercel Workflow build artifacts
+
+### Modified files (v5 — workflow removal):
+- `lib/ai/workflows/steps.ts` — Removed `'use step'` directives, hook imports, `getStepMetadata`. Rewrote askUser/sendEmail/createCalendarEvent handlers. Added `awaitingHumanInput` tracking.
+- `lib/ai/workflows/agent-workflow.ts` — Removed `'use workflow'` directive. Added awaitingHumanInput early-exit logic.
+- `app/api/agents/[id]/start/route.ts` — Uses `runAgentInBackground` instead of `start()` from workflow/api
+- `app/api/agents/[id]/chat/route.ts` — Uses `runAgentInBackground` instead of `start()` from workflow/api
+- `lib/scheduler/heartbeat.ts` — Uses `runAgentInBackground` instead of `start()` from workflow/api
+- `app/api/activities/[id]/approve/route.ts` — Rewritten: executes actions + triggers continuation via `runAgentInBackground`
+- `app/api/activities/[id]/reject/route.ts` — Rewritten: sets agent to idle, no continuation
+- `app/api/scheduler/tick/route.ts` — Added `maxDuration = 300`
+- `lib/ai/prompts.ts` — Updated HITL guidelines for event-driven pattern
+- `next.config.mjs` — Removed `withWorkflow()` wrapper
+- `tsconfig.json` — Removed `workflow` plugin
+- `package.json` — Removed `workflow`, added `@vercel/functions`
 
 ### Modified files (v4 — auth fixes & dynamic memory):
 - `app/api/activities/route.ts` — Added `requireAgentOwnership(agent_id)` to POST handler

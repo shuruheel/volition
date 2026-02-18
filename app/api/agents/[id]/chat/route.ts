@@ -3,6 +3,8 @@ import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
 import { requireAgentOwnership } from '@/lib/auth';
 
+export const maxDuration = 300;
+
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
@@ -62,16 +64,14 @@ export async function POST(
 
     const chatPrompt = `The user just sent you a message: "${content.trim()}"\n\nRespond to their message and take any requested actions.`;
 
-    const { start } = await import('workflow/api');
-    const { agentTaskWorkflow } = await import('@/lib/ai/workflows/agent-workflow');
-    const run = await start(agentTaskWorkflow, [id, chatPrompt, 10, 'chat']);
+    const { runAgentInBackground } = await import('@/lib/agent-runner');
+    runAgentInBackground(id, chatPrompt, 10, 'chat');
 
-    console.log(`[Chat] Triggered chat workflow for agent ${id}, runId: ${run.runId}`);
+    console.log(`[Chat] Triggered chat workflow for agent ${id}`);
 
     return NextResponse.json({
       message: 'Message sent. Agent is responding...',
       workflowTriggered: true,
-      runId: run.runId,
     });
   } catch (error: any) {
     if (error?.message === 'Agent not found' || error?.message === 'Authentication required') {

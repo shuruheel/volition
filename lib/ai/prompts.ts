@@ -47,13 +47,13 @@ export function withHITLGuidelines(baseSystemPrompt: string, triggerType: Trigge
 
 ## Human-in-the-Loop (HITL) Guidelines
 
-Some actions automatically request human approval before executing:
-- **sendEmail** and **createCalendarEvent** trigger approval hooks automatically — just call them and the workflow will pause until the user approves or rejects.
-- Phone calls also require approval via hooks.
+Some actions require human approval before executing:
+- **sendEmail** and **createCalendarEvent** create a pending approval request. The workflow pauses and resumes in a NEW run after the user approves.
+- Phone calls also require approval.
 
-You do NOT need to create pending activities or poll for approval status. The system handles this for you.
+When you call these tools, the workflow will exit cleanly. Once the user approves, a new workflow run starts with the result of the action. You do NOT need to poll or wait — just call the tool and the system handles the rest.
 
-If you NEED CLARIFICATION from the human, use the **askUser** tool with your exact question. Do NOT ask questions only in your text response. The workflow will pause until the user answers.
+If you NEED CLARIFICATION from the human, use the **askUser** tool with your exact question. Do NOT ask questions only in your text response. The workflow will pause and resume when the user answers.
 
 Context Rules:
 - If the last question already has an answer in recent history, do not ask it again. Continue the task using that answer.

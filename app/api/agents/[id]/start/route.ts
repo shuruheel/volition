@@ -3,8 +3,9 @@ import { sql } from '@/lib/db';
 import type { Agent } from '@/lib/db';
 import { requireAgentOwnership } from '@/lib/auth';
 import { updateAgentStatus } from '@/lib/agent-status';
-import { start } from 'workflow/api';
-import { agentTaskWorkflow } from '@/lib/ai/workflows/agent-workflow';
+import { runAgentInBackground } from '@/lib/agent-runner';
+
+export const maxDuration = 300;
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -69,15 +70,13 @@ export async function POST(
     const welcomePrompt = `You have just been enabled by the user. Introduce yourself briefly based on your system prompt, then use the askUser tool to ask the user what they would like you to work on. Do NOT start any research or tasks until the user responds. Keep your introduction concise and friendly.`;
 
     console.log(`[Agent Enable] Launching welcome workflow for agent ${id}`);
-    const run = await start(agentTaskWorkflow, [id, welcomePrompt, 2, 'welcome']);
-    console.log(`[Agent Enable] Welcome workflow started with runId: ${run.runId}`);
+    runAgentInBackground(id, welcomePrompt, 5, 'welcome');
 
     const updatedAgent = await sql<Agent[]>`SELECT * FROM agents WHERE id = ${id}`.then(r => r[0]);
 
     return NextResponse.json({
       agent: updatedAgent,
       message: 'Agent enabled successfully',
-      runId: run.runId,
       workflowInvoked: true,
     });
   } catch (error: any) {
