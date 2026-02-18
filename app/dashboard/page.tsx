@@ -292,8 +292,8 @@ export default function DashboardPage() {
                 <Brain className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h1 className="font-semibold text-lg">Agent Dashboard</h1>
-                <p className="text-xs text-muted-foreground">AI Management & Monitoring</p>
+                <h1 className="font-semibold text-lg">Volition</h1>
+                <p className="text-xs text-muted-foreground">AI Agent Orchestration Platform</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
