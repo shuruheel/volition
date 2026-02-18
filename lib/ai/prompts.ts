@@ -2,7 +2,7 @@
  * Prompt helpers for agent system prompts
  */
 
-export type TriggerType = 'welcome' | 'chat' | 'heartbeat' | 'manual';
+export type TriggerType = 'welcome' | 'chat' | 'heartbeat' | 'manual' | 'task';
 
 /**
  * Append heartbeat checklist to system prompt (for scheduled runs)
@@ -47,22 +47,13 @@ export function withHITLGuidelines(baseSystemPrompt: string, triggerType: Trigge
 
 ## Human-in-the-Loop (HITL) Guidelines
 
-Some actions require human approval or clarification before you can proceed.
+Some actions automatically request human approval before executing:
+- **sendEmail** and **createCalendarEvent** trigger approval hooks automatically — just call them and the workflow will pause until the user approves or rejects.
+- Phone calls also require approval via hooks.
 
-ALWAYS use createPendingActivity BEFORE performing ANY of these:
-- Phone calls
-- Sending emails
-- Creating/modifying calendar events
-- Financial transactions
+You do NOT need to create pending activities or poll for approval status. The system handles this for you.
 
-If you NEED CLARIFICATION from the human, use the askUser tool with your exact question. Do NOT ask questions only in your text response. The question will appear in the activity feed and the workflow will pause until answered.
-
-Approval Workflow:
-1) Use createPendingActivity with full details, reasoning, and priority.
-2) Wait. Poll checkApprovalStatus every 30–60 seconds.
-3) If approved, proceed using the (possibly modified) payload.
-4) If rejected, do not proceed and explain the limitation.
-5) Timeout guidance: If still pending after ~5 minutes, inform the user and stop.
+If you NEED CLARIFICATION from the human, use the **askUser** tool with your exact question. Do NOT ask questions only in your text response. The workflow will pause until the user answers.
 
 Context Rules:
 - If the last question already has an answer in recent history, do not ask it again. Continue the task using that answer.
@@ -97,10 +88,6 @@ The user has sent you a message. Respond conversationally and take action if app
 - If the task requires research, start a research session.
 - If the task is a simple question, answer it directly.
 
-## Planner Usage
-- After each tool result, call planNextStep with your nextAction and brief reason.
-- Stop when the user's request is fulfilled or you need more input.
-
 ## Timeout Handling
 - If Firecrawl or browserTask is pending or times out, do NOT stop. Immediately pivot: choose a new query, different source, or constrain domains/steps, then continue.
 `;
@@ -120,10 +107,23 @@ This is a scheduled heartbeat run. You are doing a quick check-in.
 - Keep this run short and focused — heartbeats are check-ins, not deep work sessions.
 - If you find something that needs extended work, note it and stop. The user can trigger a dedicated run.
 
-## Planner Usage
-- After each tool result, call planNextStep with your nextAction and brief reason.
-- Choose among: firecrawlResearch, askUser, stop.
-- Default to stop unless there's a clear, actionable item.
+## Timeout Handling
+- If Firecrawl or browserTask is pending or times out, do NOT stop. Immediately pivot: choose a new query, different source, or constrain domains/steps, then continue.
+`;
+  }
+
+  if (triggerType === 'task') {
+    return `${baseSystemPrompt}${hitlCore}
+
+## Your Role: Task Execution
+
+Follow your system prompt and enabled skills to accomplish the task at hand.
+
+**Guidelines:**
+- Use your available tools to complete the task.
+- If you need clarification, use the askUser tool.
+- Use research tools (firecrawlResearch, browserTask) when you need external information.
+- Be focused and efficient — complete the task without unnecessary steps.
 
 ## Timeout Handling
 - If Firecrawl or browserTask is pending or times out, do NOT stop. Immediately pivot: choose a new query, different source, or constrain domains/steps, then continue.
@@ -188,12 +188,6 @@ IMPORTANT: Research is a MULTI-SESSION CONTINUOUS PROCESS. Each session follows 
 **Alternative Tools:**
 - Use browserTask ONLY for interactive flows (logins, forms, bookings) or when Firecrawl cannot access content.
 - For simple research, always prefer the 3-step workflow above.
-
-## Planner Usage
-
-- After each tool result, call planNextStep with your nextAction and brief reason.
-- Choose among: startResearchSession, firecrawlResearch, completeResearchSession, browserTask, askUser, stop.
-- Stop when you have enough evidence, run out of high-quality leads, or require user input.
 
 ## Timeout Handling
 

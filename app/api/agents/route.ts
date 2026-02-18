@@ -40,6 +40,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate tools array against known tool identifiers
+    const VALID_TOOLS = ['google', 'firecrawl', 'supermemory', 'browser', 'telegram'];
+    if (Array.isArray(tools) && tools.length > 0) {
+      const invalidTools = tools.filter((t: string) => !VALID_TOOLS.includes(t));
+      if (invalidTools.length > 0) {
+        return NextResponse.json(
+          { error: `Unknown tool(s): ${invalidTools.join(', ')}. Valid tools: ${VALID_TOOLS.join(', ')}` },
+          { status: 400 }
+        );
+      }
+    }
+
     const userId = await requireUserId();
     const result = await sql<Agent[]>`
       INSERT INTO agents (name, prompt, tools, status, user_id, model_provider, model_id)

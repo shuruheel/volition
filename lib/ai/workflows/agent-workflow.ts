@@ -21,13 +21,14 @@ import {
   autoCompleteResearchSessionStep,
   checkAgentEnabledStep,
   loadMemoryContextStep,
+  validateToolConfigsStep,
 } from './steps';
 
 export async function agentTaskWorkflow(
   agentId: string,
   initialPrompt: string,
   maxSteps: number = 20,
-  triggerType: TriggerType = 'manual'
+  triggerType: TriggerType = 'task'
 ) {
   'use workflow';
 
@@ -68,7 +69,22 @@ export async function agentTaskWorkflow(
   }
 
   if (pending) {
-    systemPrompt += `\n\nNote: There is a pending user question awaiting approval. Do not re-ask. Wait by polling approval instead.`;
+    systemPrompt += `\n\nNote: There is a pending user question awaiting a response. Do not re-ask the same question — wait for the user to reply.`;
+  }
+
+  // Pre-flight: validate that enabled tools have their integrations configured
+  let enabledTools: string[] = Array.isArray(agent.tools) ? [...agent.tools] : [];
+  const validation = await validateToolConfigsStep(agent.user_id || null, enabledTools);
+  if (!validation.valid) {
+    console.log(`[Workflow] Unconfigured tools detected: ${validation.missing.join(', ')}`);
+    // Filter out unconfigured tools so the agent doesn't get tools that will fail
+    enabledTools = enabledTools.filter(t => !validation.missing.includes(t));
+    // Log a warning activity so the user sees what's missing
+    await logActivityStep(agentId, 'task_completed', {
+      title: 'Skipped unconfigured tools',
+      description: `Skipped tools [${validation.missing.join(', ')}] — not configured. Configure them in Settings.`,
+      skippedTools: validation.missing,
+    });
   }
 
   // Track workflow state (persisted across restarts)
@@ -115,7 +131,7 @@ export async function agentTaskWorkflow(
         researchContext: researchContext || null,
         memoryContext: memoryContext || null,
         userPrompt: String(initialPrompt),
-        enabledTools: Array.isArray(agent.tools) ? [...agent.tools] : [],
+        enabledTools: [...enabledTools],
         currentSessionId: currentSessionId || null,
         researchStarted: Boolean(researchStarted),
       });
@@ -128,10 +144,11 @@ export async function agentTaskWorkflow(
       researchStarted = result.researchStarted;
       const researchSessionCompleted = result.researchSessionCompleted;
 
-      // If a research session was just completed, update userPrompt to encourage analysis and planning
+      // If a research session was just completed, update userPrompt to encourage next steps
       if (researchSessionCompleted) {
-        console.log('[Workflow] Research session completed, encouraging post-session analysis and planning');
-        initialPrompt = `You've just completed a research session. Now you MUST:
+        if (triggerType === 'manual') {
+          console.log('[Workflow] Research session completed (manual trigger), encouraging continuous research');
+          initialPrompt = `You've just completed a research session. Now you MUST:
 1. Analyze what you've learned in this session
 2. Review your system prompt to identify remaining knowledge gaps
 3. Plan what research topic to tackle next
@@ -139,6 +156,10 @@ export async function agentTaskWorkflow(
 5. If clear, proceed to start a new research session on the next topic
 
 Remember: You are a CONTINUOUS RESEARCH AGENT. Your goal is to populate your memory with comprehensive research based on your system prompt. Do NOT stop after one session - continue researching until you have comprehensive coverage of all topics in your system prompt.`;
+        } else {
+          console.log('[Workflow] Research session completed, continuing with task');
+          initialPrompt = `You've completed a research session. Review your findings and continue with your task.`;
+        }
       }
 
       // Check finish reason
