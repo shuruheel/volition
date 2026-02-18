@@ -1,5 +1,6 @@
 "use client"
 
+import { signIn } from "next-auth/react"
 import { Brain } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -26,10 +27,7 @@ export default function LoginPage() {
           <Button
             className="w-full gap-2"
             size="lg"
-            onClick={() => {
-              // NextAuth signIn redirect
-              window.location.href = '/api/auth/signin/google'
-            }}
+            onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path
