@@ -443,12 +443,12 @@ export async function updateAgentDBStatusStep(
 /**
  * Get chat history and context for agent
  */
-export async function getAgentContextStep(agentId: string, historyLimit: number = 20, contextLimit: number = 5) {
+export async function getAgentContextStep(agentId: string, historyLimit: number = 20, contextLimit: number = 5, userId?: string | null) {
   'use step';
-  
+
   const history = await getLastChatTurns(agentId, historyLimit);
   const researchContext = await getRecentResearchContext(agentId, contextLimit);
-  const memoryContext = await getRecentMemoriesContext(agentId, contextLimit);
+  const memoryContext = await getRecentMemoriesContext(agentId, contextLimit, userId);
   const pending = await hasPendingUserInput(agentId);
   
   // Ensure history is fully serializable (map to plain objects)
@@ -710,14 +710,13 @@ export async function executeLLMDecisionStep(args: {
         type: 'function',
         function: {
           name: 'readMemory',
-          description: 'Read a memory file from your persistent storage. Available files: soul.md (personality/style), preferences.md (learned user preferences), knowledge.md (accumulated research), journal.md (activity summaries).',
+          description: 'Read a memory file from your persistent storage. Suggested files: soul.md (personality/style), preferences.md (learned user preferences), knowledge.md (accumulated research), journal.md (activity summaries). You can also read any custom .md file you previously created.',
           parameters: {
             type: 'object',
             properties: {
               filename: {
                 type: 'string',
-                enum: ['soul.md', 'preferences.md', 'knowledge.md', 'journal.md'],
-                description: 'Which memory file to read',
+                description: 'Memory file to read (e.g., soul.md, preferences.md, knowledge.md, journal.md, or any custom .md file)',
               },
             },
             required: ['filename'],
@@ -729,14 +728,13 @@ export async function executeLLMDecisionStep(args: {
         type: 'function',
         function: {
           name: 'updateMemory',
-          description: 'Write or update a memory file in your persistent storage. Use this to save learned preferences, accumulated knowledge, personality notes, or daily journal entries.',
+          description: 'Write or update a memory file in your persistent storage (replaces the full file content). Suggested files: soul.md, preferences.md, knowledge.md, journal.md. You can also create any custom .md file (e.g., project-notes.md, meeting-notes.md).',
           parameters: {
             type: 'object',
             properties: {
               filename: {
                 type: 'string',
-                enum: ['soul.md', 'preferences.md', 'knowledge.md', 'journal.md'],
-                description: 'Which memory file to update',
+                description: 'Memory file to update (e.g., soul.md, preferences.md, knowledge.md, journal.md, or any custom .md filename)',
               },
               content: {
                 type: 'string',
@@ -744,6 +742,50 @@ export async function executeLLMDecisionStep(args: {
               },
             },
             required: ['filename', 'content'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'appendMemory',
+          description: 'Append content to a memory file without replacing existing content. Great for journal entries, meeting notes, and incremental knowledge building.',
+          parameters: {
+            type: 'object',
+            properties: {
+              filename: {
+                type: 'string',
+                description: 'Memory file to append to (e.g., journal.md, meeting-notes.md)',
+              },
+              content: {
+                type: 'string',
+                description: 'Markdown content to append',
+              },
+            },
+            required: ['filename', 'content'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'searchMemory',
+          description: 'Semantically search across all your memory files. Use this to recall information from your persistent storage without knowing which specific file contains it.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Natural language search query',
+              },
+              limit: {
+                type: 'number',
+                description: 'Max results (default 5)',
+              },
+            },
+            required: ['query'],
             additionalProperties: false,
           },
         },
@@ -1290,12 +1332,52 @@ export async function executeLLMDecisionStep(args: {
           }
           try {
             const { writeMemoryFile } = await import('@/lib/integrations/google-drive');
+            const { storeMemoryInSupermemory } = await import('@/lib/integrations/supermemory');
             const agentRows = await sql`SELECT name FROM agents WHERE id = ${agentId}`;
             const agentName = agentRows[0]?.name || 'Agent';
             const fileId = await writeMemoryFile(userId, agentId, agentName, args.filename, args.content);
+            // Sync to Supermemory for semantic search
+            await storeMemoryInSupermemory(agentId, args.filename, args.content, userId);
             result = { success: true, filename: args.filename, fileId };
           } catch (error: any) {
             result = { success: false, error: error?.message || 'Failed to update memory file' };
+          }
+          break;
+        }
+        case 'appendMemory': {
+          if (!userId) {
+            result = { success: false, error: 'No user context for memory access' };
+            break;
+          }
+          try {
+            const { appendMemoryFile } = await import('@/lib/integrations/google-drive');
+            const { storeMemoryInSupermemory } = await import('@/lib/integrations/supermemory');
+            const agentRows = await sql`SELECT name FROM agents WHERE id = ${agentId}`;
+            const agentName = agentRows[0]?.name || 'Agent';
+            const { fileId, fullContent } = await appendMemoryFile(userId, agentId, agentName, args.filename, args.content);
+            // Sync full content to Supermemory for semantic search
+            await storeMemoryInSupermemory(agentId, args.filename, fullContent, userId);
+            result = { success: true, filename: args.filename, fileId };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to append to memory file' };
+          }
+          break;
+        }
+        case 'searchMemory': {
+          try {
+            const { searchAgentMemory } = await import('@/lib/integrations/supermemory');
+            const results = await searchAgentMemory(agentId, args.query, args.limit || 5, userId);
+            result = {
+              success: true,
+              results: results.map((r) => ({
+                filename: r.filename,
+                content: r.content.slice(0, 2000),
+                score: r.score,
+              })),
+              count: results.length,
+            };
+          } catch (error: any) {
+            result = { success: false, error: error?.message || 'Failed to search memory' };
           }
           break;
         }

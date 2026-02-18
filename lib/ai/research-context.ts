@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { searchMemories } from '@/lib/integrations/supermemory'
 
 interface ResearchRow {
   id: string
@@ -37,21 +38,19 @@ export async function getRecentResearchContext(agentId: string, limit: number = 
 
 /**
  * Build a short context from recently stored memories (documents).
+ * Calls searchMemories() directly instead of via HTTP to avoid auth issues
+ * when called from workflow steps (internal fetch has no auth cookies).
  */
-export async function getRecentMemoriesContext(agentId: string, limit: number = 5): Promise<string | null> {
+export async function getRecentMemoriesContext(agentId: string, limit: number = 5, userId?: string | null): Promise<string | null> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    const res = await fetch(`${baseUrl}/api/memories/search?agentId=${encodeURIComponent(agentId)}&kind=document&limit=${limit}`)
-    if (!res.ok) return null
-    const memories = (await res.json()) as Array<{ metadata?: any }>
+    const memories = await searchMemories(agentId, '', limit, userId)
     if (!Array.isArray(memories) || memories.length === 0) return null
 
     const bullets: string[] = []
     for (const m of memories) {
-      const md = m?.metadata?.markdown as string | undefined
       const title = (m?.metadata?.title as string | undefined) || 'Document'
       const url = m?.metadata?.url as string | undefined
-      const preview = (md || '').replace(/\s+/g, ' ').slice(0, 240)
+      const preview = (m?.content || '').replace(/\s+/g, ' ').slice(0, 240)
       bullets.push(`- ${title}${url ? ` (${url})` : ''}: ${preview}`)
     }
     return `Relevant prior knowledge (from Supermemory):\n${bullets.join('\n')}`

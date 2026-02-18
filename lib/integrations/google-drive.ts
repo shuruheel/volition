@@ -8,7 +8,7 @@ import { getOAuth2Client } from './google';
 import { sql } from '@/lib/db';
 
 const VOLITION_FOLDER_NAME = 'Volition';
-const MEMORY_FILES = ['soul.md', 'preferences.md', 'knowledge.md', 'journal.md'] as const;
+export const MEMORY_FILES = ['soul.md', 'preferences.md', 'knowledge.md', 'journal.md'] as const;
 export type MemoryFileName = typeof MEMORY_FILES[number];
 
 /**
@@ -90,7 +90,7 @@ export async function writeMemoryFile(
   userId: string,
   agentId: string,
   agentName: string,
-  filename: MemoryFileName,
+  filename: string,
   content: string
 ): Promise<string> {
   const auth = await getOAuth2Client(userId);
@@ -143,7 +143,7 @@ export async function writeMemoryFile(
 export async function readMemoryFile(
   userId: string,
   agentId: string,
-  filename: MemoryFileName
+  filename: string
 ): Promise<string | null> {
   const agents = await sql`SELECT drive_file_ids FROM agents WHERE id = ${agentId}`;
   const fileIds: Record<string, string> = agents[0]?.drive_file_ids || {};
@@ -166,16 +166,59 @@ export async function readMemoryFile(
 }
 
 /**
+ * Append content to a memory file without replacing existing content.
+ * Reads the current file, appends the new content with a separator, and writes back.
+ */
+export async function appendMemoryFile(
+  userId: string,
+  agentId: string,
+  agentName: string,
+  filename: string,
+  content: string
+): Promise<{ fileId: string; fullContent: string }> {
+  const existing = await readMemoryFile(userId, agentId, filename);
+  const fullContent = existing ? `${existing}\n\n${content}` : content;
+  const fileId = await writeMemoryFile(userId, agentId, agentName, filename, fullContent);
+  return { fileId, fullContent };
+}
+
+/**
  * List all memory files for an agent.
+ * Discovers files dynamically from the agent's Drive folder, falling back to cached drive_file_ids.
  */
 export async function listMemoryFiles(
   userId: string,
   agentId: string
 ): Promise<Array<{ filename: string; fileId: string | null }>> {
-  const agents = await sql`SELECT drive_file_ids FROM agents WHERE id = ${agentId}`;
+  const agents = await sql`SELECT drive_folder_id, drive_file_ids FROM agents WHERE id = ${agentId}`;
   const fileIds: Record<string, string> = agents[0]?.drive_file_ids || {};
+  const folderId = agents[0]?.drive_folder_id;
 
-  return MEMORY_FILES.map((filename) => ({
+  // Try to list files dynamically from Drive folder
+  if (folderId) {
+    try {
+      const auth = await getOAuth2Client(userId);
+      const drive = google.drive({ version: 'v3', auth });
+      const res = await drive.files.list({
+        q: `'${folderId}' in parents and trashed=false and mimeType='text/markdown'`,
+        fields: 'files(id, name)',
+        spaces: 'drive',
+      });
+
+      if (res.data.files && res.data.files.length > 0) {
+        return res.data.files.map((f) => ({
+          filename: f.name || 'unknown',
+          fileId: f.id || null,
+        }));
+      }
+    } catch {
+      // Fall through to cached IDs
+    }
+  }
+
+  // Fallback: return all files from cached drive_file_ids
+  const filenames = new Set<string>([...MEMORY_FILES, ...Object.keys(fileIds)]);
+  return Array.from(filenames).map((filename) => ({
     filename,
     fileId: fileIds[filename] || null,
   }));

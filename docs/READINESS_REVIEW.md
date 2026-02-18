@@ -1,6 +1,6 @@
 # Volition v2 Readiness Review
 
-Last updated: 2026-02-17 (v3)
+Last updated: 2026-02-17 (v4)
 
 ---
 
@@ -192,8 +192,8 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 | Chat-triggered workflows | Ready | `/api/agents/[id]/chat` with atomic status claim |
 | Trigger-aware prompts | Ready | welcome/chat/heartbeat/manual prompt variants |
 | Graceful mid-workflow disable | Ready | `checkAgentEnabledStep` in loop |
-| Multi-user data isolation | **Needs Fix** | **2 routes missing ownership checks (see below)** |
-| API route authentication | **Needs Fix** | **`POST /api/activities` and `/api/agents/:id/memory` lack `requireAgentOwnership`** |
+| Multi-user data isolation | Ready | All routes have ownership checks (fixed in v4) |
+| API route authentication | Ready | All routes use `requireAgentOwnership` or `requireActivityOwnership` |
 | Workflow execution | Ready | Durable steps, trigger-type-aware step limits |
 | Research pipeline | Ready | Plan queries -> Firecrawl -> Supermemory (public data only) |
 | HITL approval | Ready | Email and calendar require approval |
@@ -227,13 +227,13 @@ This mirrors OpenClaw's "always-on assistant" feel, adapted for a web dashboard 
 
 ### Known Limitations
 
-#### Security Issues (Must Fix Before Production)
+#### Security Issues — ALL RESOLVED (v4)
 
-| Issue | Severity | Details |
-|-------|----------|---------|
-| **`POST /api/activities` missing auth** | **High** | No `requireAgentOwnership()` call. Any user can create activities for any agent. |
-| **`/api/agents/:id/memory` missing ownership check** | **Medium** | Uses `requireUserId()` but not `requireAgentOwnership()`. Data leakage risk is mitigated by Google Drive OAuth scoping (each user's token accesses their own Drive), but user A could create spurious files for agent B in their own Drive. Must add `requireAgentOwnership()`. |
-| **Telegram webhook allows hijacking** | **Medium** | `/start <agentId>` deep-link lets any Telegram user link to any agent without ownership validation. Could misdirect messages. |
+| Issue | Severity | Resolution |
+|-------|----------|------------|
+| ~~`POST /api/activities` missing auth~~ | **Fixed** | Added `requireAgentOwnership(agent_id)` before activity creation. Returns 401/404 for unauthorized access. |
+| ~~`/api/agents/:id/memory` missing ownership check~~ | **Fixed** | Replaced `requireUserId()` with `requireAgentOwnership(id)` in both GET and PUT handlers. Returns 401/404 for unauthorized access. |
+| ~~Telegram webhook allows hijacking~~ | **Fixed** | `/start <agentId>` now validates: agent must exist, be `enabled`, and have `telegram` in its `tools` array. Rejects invalid/disabled/non-Telegram agents with descriptive messages. |
 
 #### Per-User API Key Gaps — RESOLVED (v3)
 
@@ -338,18 +338,23 @@ Routes secured with `requireUserId` + user-scoped queries:
 
 ## Memory System Analysis
 
-### Supermemory — Current State (Updated v3)
+### Supermemory — Current State (Updated v4)
 
-**Architecture**: Supermemory is an external semantic search API used as a research cache for web content scraped via Firecrawl. Documents are stored with `metadata.agentId` and filtered at query time.
+**Architecture**: Supermemory is an external semantic search API used for both research document caching (web content scraped via Firecrawl) and agent memory search (memory files synced from Google Drive). Documents are stored with `metadata.agentId` and filtered at query time.
 
 **v3 improvements**:
 1. **Per-user API key resolution**: `resolveSupermemoryKey(userId)` checks `tool_configs` for a per-user encrypted key before falling back to `process.env.SUPERMEMORY_API_KEY`. Users who configure their own key get fully isolated Supermemory workspaces.
 2. **userId flows through all call sites**: `storeMarkdown()`, `searchMemories()`, `planResearchQueriesStep()`, `executeResearchStep()`, and `/api/memories/search` all pass `userId` for key resolution.
 
+**v4 improvements**:
+1. **Fixed `searchMemories()` bug**: The function was reading `results.items` but the Supermemory SDK returns `results.results`. Also fixed `item.id` → `item.documentId` and added `includeFullDocs: true` to get full document content instead of just chunks. This bug meant Supermemory search was silently returning empty arrays.
+2. **Memory file sync**: New `storeMemoryInSupermemory()` function upserts memory file content using deterministic `customId: memory:{agentId}:{filename}`. Called from `updateMemory` and `appendMemory` tool handlers after Drive writes.
+3. **Semantic memory search**: New `searchAgentMemory()` function queries Supermemory with `metadata.kind = 'memory'` filter. Exposed via the `searchMemory` workflow tool. Agents can now semantically search across all their memory files.
+
 **Remaining considerations**:
 1. **Shared env-var fallback**: If a user has no per-user key and the env var is set, all such users share a single Supermemory workspace. Data is filtered by `agentId` at query time, but an administrator with the env key could query across users.
-2. **Personal memories NOT stored here**: Soul, preferences, knowledge, and journal files are stored in Google Drive (per-user OAuth isolation). Supermemory only caches research web content — publicly available information.
-3. **Acceptable risk**: Since Supermemory only stores public web scrapes (not personal data), the shared-fallback risk is low. Users who want full isolation can configure their own Supermemory key in Settings.
+2. **Memory files now stored here too**: In addition to research web content, agent memory files (soul.md, journal.md, custom files) are also synced to Supermemory for semantic search. These are synced on write via `storeMemoryInSupermemory()`. The primary copy remains in Google Drive.
+3. **Acceptable risk**: Memory files in Supermemory are filtered by `agentId` and `kind: 'memory'`. The primary copy is always Google Drive (per-user OAuth isolation). Supermemory is a search index, not the source of truth. Users who want full isolation can configure their own Supermemory key.
 
 ### Google Drive Memory — Current State
 
@@ -361,6 +366,7 @@ Volition/
     preferences.md   — User preferences the agent learns
     knowledge.md     — Accumulated knowledge
     journal.md       — Ongoing activity log
+    *.md             — Any custom files created by the agent
 ```
 
 **Security strengths**:
@@ -372,10 +378,15 @@ Volition/
 1. **`withMemoryContext()` now wired up**: `agent-workflow.ts` calls `loadMemoryContextStep()` to read `soul.md` and `preferences.md` from Google Drive, then passes them to `withMemoryContext()` for injection into the system prompt. Agents now have persistent identity across workflow runs.
 2. **Auto-injection of memory files**: `loadMemoryContextStep()` is a durable workflow step that gracefully handles missing files, missing Google OAuth tokens, or Drive API errors (returns nulls). Prompt order: base prompt -> HITL guidelines -> memory context -> skills.
 
+**v4 improvements**:
+1. **Dynamic filenames**: Agents can create any `.md` file (e.g., `project-notes.md`, `meeting-notes.md`), not just the 4 hardcoded files. `writeMemoryFile()` and `readMemoryFile()` accept `string` instead of `MemoryFileName`.
+2. **Append mode**: New `appendMemoryFile()` function reads existing content, appends with `\n\n` separator, and writes back. Exposed via the `appendMemory` workflow tool.
+3. **Dynamic file discovery**: `listMemoryFiles()` now queries the Google Drive folder via `files.list()` API to discover all `.md` files, falling back to cached `drive_file_ids` keys.
+4. **Supermemory sync on write**: Both `updateMemory` and `appendMemory` tool handlers sync content to Supermemory after writing to Drive, enabling semantic search across all memory files.
+
 **Remaining gaps**:
-1. **No embedding-based retrieval**: Google Drive files are accessed by exact filename only. There is no semantic/vector search over memory contents. If an agent has accumulated 50 pages of knowledge.md, there is no way to retrieve only the relevant sections for the current task.
-2. **No memory summarization or compaction**: Files grow indefinitely. No mechanism to summarize old journal entries or compact knowledge.md.
-3. **knowledge.md and journal.md not auto-loaded**: Only `soul.md` and `preferences.md` are injected into the system prompt. `knowledge.md` and `journal.md` must be read explicitly via the `readMemory` tool. This is intentional — these files can grow large and would waste context window space.
+1. **No memory summarization or compaction**: Files grow indefinitely. No mechanism to summarize old journal entries or compact knowledge.md.
+2. **knowledge.md and journal.md not auto-loaded**: Only `soul.md` and `preferences.md` are injected into the system prompt. `knowledge.md` and `journal.md` must be read explicitly via the `readMemory` tool. This is intentional — these files can grow large and would waste context window space. Agents can now use `searchMemory` to semantically find relevant content across all files.
 
 ### Comparison with OpenClaw's Memory System
 

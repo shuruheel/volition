@@ -103,11 +103,12 @@ export async function searchMemories(agentId: string, query: string, limit: numb
       q: query,
       filters: { AND: [{ key: 'metadata.agentId', value: agentId }] },
       limit,
+      includeFullDocs: true,
     })
 
-    return (results.items || []).map((item: any) => ({
-      id: item.id,
-      content: item.content || '',
+    return (results.results || []).map((item: any) => ({
+      id: item.documentId,
+      content: item.content || (item.chunks || []).map((c: any) => c.content).join('\n') || '',
       metadata: item.metadata || {},
     }))
   } catch (error) {
@@ -116,4 +117,74 @@ export async function searchMemories(agentId: string, query: string, limit: numb
   }
 }
 
+/**
+ * Store or update a memory file's content in Supermemory for semantic search.
+ * Uses a deterministic customId so re-storing the same file replaces the previous version.
+ */
+export async function storeMemoryInSupermemory(
+  agentId: string,
+  filename: string,
+  content: string,
+  userId?: string | null
+): Promise<void> {
+  const apiKey = await resolveSupermemoryKey(userId)
+  if (!apiKey) return
 
+  const sm = new Supermemory({ apiKey })
+  const customId = `memory:${agentId}:${filename}`
+
+  try {
+    // Delete existing document first (upsert pattern)
+    try {
+      await sm.documents.delete(customId)
+    } catch {
+      // Ignore 404 — document may not exist yet
+    }
+
+    await sm.documents.add({
+      content,
+      customId,
+      metadata: { agentId, kind: 'memory', filename },
+    })
+  } catch (error) {
+    console.error('[storeMemoryInSupermemory] Error:', error instanceof Error ? error.message : String(error))
+  }
+}
+
+/**
+ * Semantically search across an agent's memory files in Supermemory.
+ */
+export async function searchAgentMemory(
+  agentId: string,
+  query: string,
+  limit: number = 5,
+  userId?: string | null
+): Promise<Array<{ documentId: string; filename: string; content: string; score: number }>> {
+  const apiKey = await resolveSupermemoryKey(userId)
+  if (!apiKey) return []
+
+  try {
+    const sm = new Supermemory({ apiKey })
+    const results = await sm.search.documents({
+      q: query,
+      filters: {
+        AND: [
+          { key: 'metadata.agentId', value: agentId },
+          { key: 'metadata.kind', value: 'memory' },
+        ],
+      },
+      limit,
+      includeFullDocs: true,
+    })
+
+    return (results.results || []).map((item: any) => ({
+      documentId: item.documentId || '',
+      filename: item.metadata?.filename || 'unknown',
+      content: item.content || (item.chunks || []).map((c: any) => c.content).join('\n') || '',
+      score: item.score || 0,
+    }))
+  } catch (error) {
+    console.error('[searchAgentMemory] Error:', error instanceof Error ? error.message : String(error))
+    return []
+  }
+}

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUserId } from '@/lib/auth';
+import { requireAgentOwnership } from '@/lib/auth';
 import { listMemoryFiles, readMemoryFile, writeMemoryFile } from '@/lib/integrations/google-drive';
 import { sql } from '@/lib/db';
 
@@ -13,8 +13,8 @@ interface RouteContext {
  */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
-    const userId = await requireUserId();
     const { id } = await context.params;
+    const userId = await requireAgentOwnership(id);
     const { searchParams } = new URL(request.url);
     const filename = searchParams.get('file') as any;
 
@@ -25,7 +25,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     const files = await listMemoryFiles(userId, id);
     return NextResponse.json(files);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'Agent not found' || error?.message === 'Authentication required') {
+      return NextResponse.json({ error: error.message }, { status: error.message === 'Authentication required' ? 401 : 404 });
+    }
     console.error('Failed to read memory:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to read memory' },
@@ -40,8 +43,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
  */
 export async function PUT(request: NextRequest, context: RouteContext) {
   try {
-    const userId = await requireUserId();
     const { id } = await context.params;
+    const userId = await requireAgentOwnership(id);
     const body = await request.json();
     const { filename, content } = body;
 
@@ -57,7 +60,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     const fileId = await writeMemoryFile(userId, id, agents[0].name, filename, content);
     return NextResponse.json({ success: true, fileId });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'Agent not found' || error?.message === 'Authentication required') {
+      return NextResponse.json({ error: error.message }, { status: error.message === 'Authentication required' ? 401 : 404 });
+    }
     console.error('Failed to write memory:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to write memory' },

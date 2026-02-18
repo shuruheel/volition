@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import type { Activity } from '@/lib/db';
-import { requireUserId } from '@/lib/auth';
+import { requireUserId, requireAgentOwnership } from '@/lib/auth';
 
 /**
  * GET /api/activities
@@ -128,6 +128,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await requireAgentOwnership(agent_id);
+
     const result = await sql<Activity[]>`
       INSERT INTO activities (agent_id, type, status, priority, payload)
       VALUES (${agent_id}, ${type}, ${status}, ${priority}, ${JSON.stringify(payload)})
@@ -135,7 +137,10 @@ export async function POST(request: NextRequest) {
     `;
 
     return NextResponse.json(result[0], { status: 201 });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'Agent not found' || error?.message === 'Authentication required') {
+      return NextResponse.json({ error: error.message }, { status: error.message === 'Authentication required' ? 401 : 404 });
+    }
     console.error('Failed to create activity:', error);
     return NextResponse.json(
       { error: 'Failed to create activity' },

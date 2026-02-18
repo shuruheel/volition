@@ -43,8 +43,8 @@ export async function agentTaskWorkflow(
   // Ensure agent is fully serializable
   const agent = JSON.parse(JSON.stringify(agentRaw));
 
-  // Build context from database
-  const contextRaw = await getAgentContextStep(agentId, 20, 5);
+  // Build context from database (pass userId so Supermemory can resolve per-user key)
+  const contextRaw = await getAgentContextStep(agentId, 20, 5, agent.user_id || null);
 
   // Ensure all context data is fully serializable
   const { history, researchContext, memoryContext, pending } = JSON.parse(JSON.stringify(contextRaw));
