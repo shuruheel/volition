@@ -13,7 +13,7 @@ export type { LLMProvider, ProviderConfig, LLMCompletionRequest, LLMCompletionRe
  */
 export const DEFAULT_MODELS: Record<string, string> = {
   openai: 'gpt-5.2-2025-12-11',
-  anthropic: 'claude-sonnet-4-5-20250929',
+  anthropic: 'claude-sonnet-4-6',
 };
 
 /**
@@ -63,10 +63,10 @@ export async function resolveProviderConfig(
   userId?: string | null
 ): Promise<ProviderConfig> {
   const provider = agentProvider || 'openai';
-  const model = agentModel || DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai;
 
-  // Try to get API key from tool_configs (encrypted per-user), then fall back to env vars
+  // Try to get API key (and user's preferred model) from tool_configs, then fall back to env vars
   let apiKey: string | undefined;
+  let userPreferredModel: string | undefined;
 
   if (userId) {
     try {
@@ -76,11 +76,15 @@ export async function resolveProviderConfig(
       if (configs.length > 0 && configs[0].data_encrypted) {
         const decrypted = JSON.parse(decrypt(configs[0].data_encrypted));
         apiKey = decrypted.apiKey;
+        userPreferredModel = decrypted.model;
       }
     } catch {
       // Fall through to env var
     }
   }
+
+  // Model priority: agent-specific > user's Settings preference > hardcoded default
+  const model = agentModel || userPreferredModel || DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai;
 
   if (!apiKey) {
     if (provider === 'openai') {

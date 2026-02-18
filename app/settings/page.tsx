@@ -214,7 +214,7 @@ export default function SettingsPage() {
 
   const handleTest = async (toolId: string) => {
     setTesting({ ...testing, [toolId]: true })
-    setTestResults({ ...testResults, [toolId]: { success: false } })
+    setTestResults({ ...testResults, [toolId]: undefined as any })
 
     try {
       const response = await fetch('/api/settings/test', {
@@ -456,11 +456,6 @@ export default function SettingsPage() {
                               className={`bg-secondary border-border ${maskedValue && !hasInput ? 'placeholder:text-foreground/50' : ''}`}
                             />
                           </div>
-                          {maskedValue && !hasInput && (
-                            <p className="text-xs text-muted-foreground">
-                              Current value: <span className="font-mono">{maskedValue}</span>
-                            </p>
-                          )}
                         </div>
                       )
                     })}
