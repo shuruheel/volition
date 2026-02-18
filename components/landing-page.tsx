@@ -341,7 +341,7 @@ export function LandingPage() {
               onClick={() => signIn("google", { callbackUrl: "/" })}
               className="text-sm font-medium bg-white text-black px-4 py-2 rounded-lg hover:bg-white/90 transition-colors"
             >
-              Start
+              Launch
             </button>
           </div>
         </div>
