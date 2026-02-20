@@ -4,9 +4,8 @@ import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Brain, Mail, Calendar, Search, Briefcase, Newspaper, BookOpen, Zap, ArrowLeft } from "lucide-react"
+import { Mail, Calendar, Search, Briefcase, Newspaper, BookOpen, Zap, ArrowLeft } from "lucide-react"
 import Link from "next/link"
-import type { Agent } from "@/lib/db"
 
 interface Skill {
   id: string
@@ -43,8 +42,7 @@ const TOOL_LABELS: Record<string, string> = {
 
 export default function SkillsPage() {
   const [skills, setSkills] = useState<Skill[]>([])
-  const [agents, setAgents] = useState<Agent[]>([])
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [agent, setAgent] = useState<any>(null)
   const [agentSkills, setAgentSkills] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState<string | null>(null)
@@ -52,29 +50,22 @@ export default function SkillsPage() {
   useEffect(() => {
     Promise.all([
       fetch('/api/skills').then(r => r.json()),
-      fetch('/api/agents').then(r => r.json()),
-    ]).then(([skillsData, agentsData]) => {
+      fetch('/api/agent').then(r => r.json()),
+    ]).then(([skillsData, agentData]) => {
       setSkills(skillsData)
-      setAgents(agentsData)
-      if (agentsData.length > 0) {
-        setSelectedAgentId(agentsData[0].id)
-        setAgentSkills(agentsData[0].skills || [])
+      if (agentData?.id) {
+        setAgent(agentData)
+        setAgentSkills(agentData.skills || [])
       }
       setLoading(false)
     }).catch(err => {
-      console.error('Failed to load skills/agents:', err)
+      console.error('Failed to load skills/agent:', err)
       setLoading(false)
     })
   }, [])
 
-  const handleSelectAgent = (agentId: string) => {
-    setSelectedAgentId(agentId)
-    const agent = agents.find(a => a.id === agentId)
-    setAgentSkills(agent?.skills || [])
-  }
-
   const handleToggleSkill = async (skillId: string) => {
-    if (!selectedAgentId) return
+    if (!agent) return
     const enabled = !agentSkills.includes(skillId)
     setToggling(skillId)
 
@@ -82,15 +73,12 @@ export default function SkillsPage() {
       const res = await fetch('/api/skills', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: selectedAgentId, skillId, enabled }),
+        body: JSON.stringify({ agentId: agent.id, skillId, enabled }),
       })
       if (!res.ok) throw new Error('Failed to toggle skill')
       const data = await res.json()
       setAgentSkills(data.skills)
-      // Update local agents state
-      setAgents(prev => prev.map(a =>
-        a.id === selectedAgentId ? { ...a, skills: data.skills } : a
-      ))
+      setAgent((prev: any) => prev ? { ...prev, skills: data.skills } : prev)
     } catch (err) {
       console.error('Failed to toggle skill:', err)
     } finally {
@@ -123,8 +111,10 @@ export default function SkillsPage() {
                 <Zap className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h1 className="font-semibold text-lg">Skills Marketplace</h1>
-                <p className="text-xs text-muted-foreground">Enable pre-built capabilities for your agents</p>
+                <h1 className="font-semibold text-lg">Skills</h1>
+                <p className="text-xs text-muted-foreground">
+                  {agent ? `${agentSkills.length} active skill${agentSkills.length !== 1 ? 's' : ''}` : 'Enable capabilities for your agent'}
+                </p>
               </div>
             </div>
           </div>
@@ -132,40 +122,6 @@ export default function SkillsPage() {
       </div>
 
       <div className="container mx-auto px-6 py-6">
-        {/* Agent selector */}
-        {agents.length > 0 ? (
-          <div className="mb-6">
-            <h2 className="text-sm font-medium text-muted-foreground mb-3">SELECT AGENT</h2>
-            <div className="flex gap-2 flex-wrap">
-              {agents.map(agent => (
-                <Button
-                  key={agent.id}
-                  variant={selectedAgentId === agent.id ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => handleSelectAgent(agent.id)}
-                >
-                  <Brain className="h-3 w-3 mr-1" />
-                  {agent.name}
-                  {(agent.skills?.length || 0) > 0 && (
-                    <Badge variant="secondary" className="ml-2 text-xs">
-                      {agent.skills.length}
-                    </Badge>
-                  )}
-                </Button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <Card className="mb-6">
-            <CardContent className="py-8 text-center">
-              <p className="text-muted-foreground mb-2">No agents yet. Create an agent first to enable skills.</p>
-              <Link href="/dashboard">
-                <Button variant="outline" size="sm">Go to Dashboard</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Skills grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {skills.map(skill => {
@@ -187,7 +143,7 @@ export default function SkillsPage() {
                     <Button
                       size="sm"
                       variant={isEnabled ? "default" : "outline"}
-                      disabled={!selectedAgentId || isToggling}
+                      disabled={!agent || isToggling}
                       onClick={() => handleToggleSkill(skill.id)}
                     >
                       {isToggling ? 'Updating...' : isEnabled ? 'Enabled' : 'Enable'}
@@ -198,7 +154,6 @@ export default function SkillsPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    {/* Required tools */}
                     <div>
                       <p className="text-xs font-medium text-muted-foreground mb-1">Required Tools</p>
                       <div className="flex gap-1 flex-wrap">
@@ -209,8 +164,6 @@ export default function SkillsPage() {
                         ))}
                       </div>
                     </div>
-
-                    {/* Triggers */}
                     <div>
                       <p className="text-xs font-medium text-muted-foreground mb-1">Triggers</p>
                       <div className="flex gap-1">

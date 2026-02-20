@@ -1,6 +1,6 @@
 # Volition
 
-An open-source AI agent orchestration platform. Create persistent agents that research, email, schedule, and take action on your behalf — with human-in-the-loop approval for every sensitive action.
+An open-source AI agent orchestration platform. Your personal AI assistant that researches, emails, schedules, and takes action on your behalf — with human-in-the-loop approval for every sensitive action.
 
 Built with Next.js 16, Neon Postgres, and multi-provider LLM support (OpenAI + Anthropic).
 
@@ -10,13 +10,13 @@ Most agent frameworks focus on chain-of-thought execution but ignore the hard pa
 
 Volition solves all three with a visual, web-native platform that non-engineers can use:
 
-- **Persistent Agents** — Enable an agent and it stays on duty, listening for chat messages, running heartbeat check-ins, and acting autonomously until you disable it
+- **Single Agent Per User** — Sign up and your personal AI agent is auto-created. No setup friction — just enable and go. Agents can spawn sub-agents for parallel work.
 - **Human-in-the-Loop** — Event-driven approval system pauses execution for user approval before sensitive actions (emails, calendar events, phone calls), then resumes in a new run
 - **Dynamic Memory** — Google Drive files (any `.md` file — soul.md, preferences.md, project-notes.md) + Supermemory semantic search across all memory files
-- **Background Agents** — Heartbeat scheduler runs agents on configurable intervals with checklist-driven tasks
+- **Heartbeat Scheduler** — Configurable intervals with checklist-driven tasks, active hours, and HEARTBEAT.md support from Google Drive
 - **Multi-Provider LLM** — OpenAI (GPT-5.2, o3) and Anthropic (Claude Sonnet 4.5, Opus 4.6) with per-agent model selection and per-user encrypted API keys
-- **Skills System** — Pre-built capabilities (email digest, outreach campaigns, job applications) that non-engineers can enable with one click
-- **Multi-Tool Agents** — Firecrawl (web research), Gmail + Google Calendar, Google Drive (agent memory), Browser-Use Cloud, Twilio (voice calls), Telegram bot
+- **Skills System** — Markdown-based skills (SKILL.md) for capabilities like email digest, outreach campaigns, and job applications — enable with one click
+- **Modular Tool System** — 20 tools organized into modules (core, research, memory, google, browser, telegram) loaded dynamically based on agent config
 - **Multi-User SaaS** — Google OAuth, per-user data isolation, encrypted per-user API keys for every integration, ownership checks on all API routes
 
 ## How It Works
@@ -24,24 +24,25 @@ Volition solves all three with a visual, web-native platform that non-engineers 
 ### Agent Lifecycle
 
 ```
-Create Agent → [Disabled]
-                  │
-               Enable
-                  ▼
-            [Enabled, Idle]  ← "Listening..."
-              │         ▲
-         Chat /      Workflow
-      Heartbeat /    completes
-       Welcome          │
-              ▼         │
-         [Enabled, Active]  ← "Running..."
+Sign Up → Agent Auto-Created → [Disabled]
+                                    │
+                                 Enable
+                                    ▼
+                              [Enabled, Idle]  ← "Listening..."
+                                │         ▲
+                           Chat /      Workflow
+                        Heartbeat /    completes
+                         Welcome          │
+                                ▼         │
+                           [Enabled, Active]  ← "Running..."
 ```
 
-1. **Create** — Build from scratch or use a template. Agents start disabled.
+1. **Sign Up** — Your personal agent is auto-created on first login. No manual setup needed.
 2. **Enable** — Agent introduces itself via a welcome workflow, then listens for chat messages and heartbeats.
 3. **Chat** — Send a message and the agent runs a workflow to respond and take action.
-4. **Heartbeat** — On schedule, the agent checks its task list and acts only if needed.
-5. **Disable** — Agent stops gracefully, mid-workflow if necessary.
+4. **Heartbeat** — On schedule (with active hours), the agent checks its task list and acts only if needed.
+5. **Sub-Agents** — Your agent can spawn async sub-agents for parallel research and tasks (max depth: 3).
+6. **Disable** — Agent stops gracefully, mid-workflow if necessary.
 
 ### Memory System
 
@@ -72,7 +73,8 @@ Sensitive actions require your approval before execution:
 |---------|--------|
 | Google OAuth authentication | Stable |
 | Multi-user data isolation + ownership checks | Stable |
-| Agent CRUD + enable/disable lifecycle | Stable |
+| Single agent per user with auto-creation | Stable |
+| Modular tool system (20 tools in lib/ai/tools/) | Stable |
 | Async workflow execution with background runs | Stable |
 | Trigger-aware prompts (welcome/chat/heartbeat/manual) | Stable |
 | Web research (Firecrawl search + scrape) | Stable |
@@ -84,12 +86,12 @@ Sensitive actions require your approval before execution:
 | Per-user encrypted API keys (AES-GCM) for all integrations | Stable |
 | Chat interface with chat-triggered workflows | Stable |
 | Heartbeat scheduler (background agents) | Stable |
-| Skills system (6 built-in skills) | Stable |
+| Skills system (6 SKILL.md-based skills) | Stable |
 | Multi-provider LLM (OpenAI + Anthropic) | Stable |
-| Agent templates (5 pre-built) | Stable |
 | Agent analytics | Stable |
 | Google Drive memory (per-agent files) | Stable |
-| Sub-agent spawning | Stable |
+| Async sub-agent spawning (max depth 3) | Stable |
+| Active hours for heartbeat schedules | Stable |
 | Gmail (send, search) | Stable |
 | Google Calendar (list, create events) | Stable |
 | Telegram bot (send/receive messages) | Stable |
@@ -105,16 +107,23 @@ Next.js 16 App Router
 ├── API Routes (REST endpoints, 40+, all with ownership checks)
 ├── Agent Execution Engine (plain async + event-driven HITL)
 │   ├── agent-workflow.ts    — Main workflow loop (async function)
-│   ├── steps.ts             — Step functions + 17 inline tool definitions
-│   └── agent-runner.ts      — Background execution via waitUntil
+│   ├── steps.ts             — Step functions + tool handler dispatch
+│   ├── agent-runner.ts      — Background execution via waitUntil
+│   └── tools/               — 20 modular tool definitions + handlers
+│       ├── core/            — log-activity, ask-user, send-message, spawn/check sub-agent
+│       ├── research/        — start-session, plan-queries, firecrawl-research, complete-session
+│       ├── memory/          — read, update, append, search memory
+│       ├── google/          — send-email, search-emails, create/list calendar events
+│       ├── browser/         — browser-task
+│       └── telegram/        — send-telegram-message
 ├── LLM Providers (per-user encrypted API keys)
 │   ├── OpenAI               — GPT-5.2, o3, o4-mini, GPT-4.1
 │   └── Anthropic            — Claude Sonnet 4.5, Opus 4.6, Haiku 4.5
 ├── Memory System
 │   ├── Google Drive          — Per-agent .md files (dynamic filenames, append mode)
 │   └── Supermemory           — Semantic search across all memory files
-├── Skills System
-│   └── 6 built-in skills    — Email digest, calendar, outreach, job search, briefing, research
+├── Skills System (SKILL.md format)
+│   └── 6 skills             — Email digest, calendar, outreach, job search, briefing, research
 ├── Integrations (all with per-user key resolution)
 │   ├── Firecrawl            — Web search + scraping
 │   ├── Supermemory          — Semantic memory storage + retrieval
@@ -123,8 +132,8 @@ Next.js 16 App Router
 │   ├── Browser-Use Cloud    — Browser automation
 │   └── Twilio               — Voice calls
 ├── Scheduler
-│   └── Heartbeat            — Vercel Cron (production) / setInterval (dev)
-└── Database                  — Neon Postgres (serverless), 15 migrations
+│   └── Heartbeat            — Vercel Cron (prod) / setInterval (dev), active hours, HEARTBEAT.md
+└── Database                  — Neon Postgres (serverless), 19 migrations
 ```
 
 ## Quick Start
@@ -166,7 +175,7 @@ Required variables:
 pnpm db:setup
 ```
 
-This runs all 15 migrations to create the schema.
+This runs all 19 migrations to create the schema.
 
 ### 4. Start the dev server
 
@@ -180,10 +189,11 @@ Open [http://localhost:3000](http://localhost:3000).
 
 1. Sign in with Google
 2. Enter your OpenAI API key on the onboarding screen
-3. Create an agent (or use a template from the Templates page)
-4. Enable the agent — it will introduce itself and ask what you want
-5. Chat with the agent to give it tasks
-6. Watch it research, take actions, and ask for approval on sensitive operations
+3. Your personal agent is auto-created — enable it on the dashboard
+4. Chat with the agent to give it tasks
+5. Enable skills (email digest, research, etc.) on the Skills page
+6. Configure heartbeat schedule, identity, and model in Settings
+7. Watch it research, take actions, and ask for approval on sensitive operations
 
 ## Pages
 
@@ -192,26 +202,15 @@ Open [http://localhost:3000](http://localhost:3000).
 | Landing | `/` | Product landing page |
 | Login | `/login` | Google OAuth sign-in |
 | Onboarding | `/onboarding` | OpenAI API key setup |
-| Dashboard | `/dashboard` | Agent management, activity feed, metrics |
-| Templates | `/templates` | Pre-built agent templates |
-| Skills | `/skills` | Browse and enable skills per agent |
-| Settings | `/settings` | Configure API keys for all integrations |
-| Chat | `/chat` | Direct chat with agents |
+| Dashboard | `/dashboard` | Single agent activity feed + status |
+| Skills | `/skills` | Browse and enable skills for your agent |
+| Settings | `/settings` | Agent identity, heartbeat config, model selection, API keys |
+| Chat | `/chat` | Direct chat with your agent |
 | Graph | `/graph` | Knowledge graph visualization |
-
-## Agent Templates
-
-Start with a pre-configured agent:
-
-- **Email Manager** — Triage inbox, draft responses, schedule meetings (30-min heartbeat)
-- **Research Assistant** — Deep multi-session research on any topic
-- **Outreach Agent** — Research prospects, draft personalized outreach (2-hour heartbeat)
-- **Daily Briefing** — Morning intelligence briefing from configured sources (daily heartbeat)
-- **Job Hunter** — Monitor job listings, research companies, prepare applications (6-hour heartbeat)
 
 ## Skills
 
-Enable pre-built capabilities on any agent:
+Enable pre-built capabilities on your agent (defined as SKILL.md files):
 
 - **Email Digest** — Summarize unread emails, highlight action items
 - **Calendar Summary** — Daily calendar briefing with meeting prep
@@ -243,7 +242,7 @@ pnpm db:migrate       # Run migrations (alias)
 
 ### Adding New Tools
 
-Tools for agent workflows are defined **inline** in `lib/ai/workflows/steps.ts` using raw OpenAI function call JSON Schema (not the AI SDK `tool()` helper). See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+Tools are defined as modular files in `lib/ai/tools/` using the `ToolModule` interface — each file exports a `definition` (OpenAI JSON Schema), a `handler` function, and optional `requires`/`requiresAuth` fields. The registry (`lib/ai/tools/registry.ts`) assembles tools dynamically based on agent config. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ### Adding New LLM Providers
 

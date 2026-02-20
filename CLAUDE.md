@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Volition — open-source AI agent orchestration platform built with Next.js 16 and Neon Postgres. Multi-user SaaS with Google OAuth authentication, heartbeat scheduling, multi-provider LLM support (OpenAI + Anthropic), Google Drive agent memory, skills system, and sub-agent spawning. Integrated tools: Firecrawl (web research), Supermemory (graph memory), Google APIs (Gmail + Calendar + Drive), Telegram (bot messaging), Browser-Use Cloud (browser automation), and Twilio (voice calls).
+Volition — open-source AI agent orchestration platform built with Next.js 16 and Neon Postgres. Single-agent-per-user model with auto-creation on signup. Multi-user SaaS with Google OAuth authentication, heartbeat scheduling (with active hours and HEARTBEAT.md support), multi-provider LLM support (OpenAI + Anthropic), Google Drive agent memory, markdown-based skills system (SKILL.md), modular tool architecture, and async sub-agent spawning. Integrated tools: Firecrawl (web research), Supermemory (graph memory), Google APIs (Gmail + Calendar + Drive), Telegram (bot messaging), Browser-Use Cloud (browser automation), and Twilio (voice calls).
 
 ## Development Commands
 
@@ -29,17 +29,22 @@ No test framework is configured yet. Verify changes manually via `pnpm dev` and 
 - **Auth**: NextAuth.js v5 (beta) with Google OAuth provider, JWT sessions. `lib/auth.ts` (full config), `lib/auth.config.ts` (edge-safe for middleware).
 - **Styling**: Tailwind CSS 4, shadcn/ui (New York style, RSC-enabled)
 
+### Agent Model
+
+Single agent per user, auto-created on signup via `getOrCreateUserAgent()` in `lib/agent-helpers.ts`. The `/api/agent` endpoint (singular) provides GET/PATCH for the user's agent. Sub-agents use `parent_agent_id` for hierarchy (max depth: 3).
+
 ### Agent Execution Engine
 
-The execution engine is in `lib/ai/workflows/` and `lib/agent-runner.ts`:
+The execution engine is in `lib/ai/workflows/`, `lib/ai/tools/`, and `lib/agent-runner.ts`:
 
 - **`agent-runner.ts`**: Background execution helper. `runAgentInBackground()` launches `agentTaskWorkflow` as a detached promise via `waitUntil` from `@vercel/functions`, letting the HTTP response return immediately.
 - **`agent-workflow.ts`**: Main workflow function (plain async). Runs a step loop (max 20 steps) where each step is one LLM decision cycle with tool calling. Injects skills and memory context into system prompts. Exits early when `awaitingHumanInput` is set.
-- **`steps.ts`**: Reusable async step functions. Key functions: `executeLLMDecisionStep`, `fetchAgentStep`, `planResearchQueriesStep`, `executeResearchStep`, `executeBrowserStep`, `logActivityStep`. All workflow tool definitions (research, email, calendar, telegram, browser, memory, sub-agents) are inline here.
+- **`steps.ts`**: Reusable async step functions. Key functions: `executeLLMDecisionStep`, `fetchAgentStep`, `logActivityStep`. Uses the tool registry (`collectTools()`) to assemble tools dynamically based on agent config, and dispatches tool calls via the handler map.
+- **`lib/ai/tools/`**: Modular tool system. 20 tools organized into directories (core, research, memory, google, browser, telegram). Each tool exports a `ToolModule` with `definition`, `handler`, optional `requires` (tool group dependencies), and `requiresAuth`.
 
 **HITL pattern (event-driven)**: When the agent calls `askUser`, `sendEmail`, or `createCalendarEvent`, the step creates a pending activity, sets `awaitingHumanInput = true`, and the workflow exits cleanly. The approve route executes the action (e.g., actually sends the email) and triggers a NEW workflow run via `runAgentInBackground`. Rejection sets the agent to idle with no continuation.
 
-**Critical**: Tools inside workflows are defined as **raw OpenAI function call format** (JSON Schema with `parameters` key), NOT using the AI SDK `tool()` helper.
+**Critical**: Tools use **raw OpenAI function call format** (JSON Schema with `parameters` key), NOT using the AI SDK `tool()` helper.
 
 ### LLM Providers
 
@@ -51,15 +56,21 @@ The execution engine is in `lib/ai/workflows/` and `lib/agent-runner.ts`:
 
 ### Skills System
 
-`lib/skills/` manages prompt-template skills injected into agent system prompts:
-- `types.ts` — Skill interface
-- `registry.ts` — 6 built-in skills (email-digest, calendar-summary, outreach-campaign, job-application, daily-briefing, research-deep-dive)
+Skills are defined as `SKILL.md` files in the `skills/` directory at project root:
+- Each skill has a directory: `skills/{skill-id}/SKILL.md`
+- SKILL.md uses YAML frontmatter (id, name, description, tools, triggers) + markdown instructions body
+- `lib/skills/registry.ts` loads and caches parsed SKILL.md files from disk
+- `lib/skills/types.ts` — Skill interface
+- 6 built-in skills: email-digest, calendar-summary, outreach-campaign, job-application, daily-briefing, research-deep-dive
 
 Skills are enabled per-agent via `skills TEXT[]` column on agents table.
 
 ### Scheduler
 
-`lib/scheduler/heartbeat.ts` processes overdue agent schedules. Production uses Vercel Cron (`vercel.json`), local dev uses `instrumentation.ts` with `setInterval`.
+`lib/scheduler/heartbeat.ts` processes overdue agent schedules. Features:
+- **Active hours**: Skips schedules outside configured time window (`active_hours_start`/`active_hours_end` on `agent_schedules`)
+- **HEARTBEAT.md**: Reads checklist from Google Drive if available (overrides `checklist` column)
+- Production uses Vercel Cron (`vercel.json`), local dev uses `instrumentation.ts` with `setInterval`.
 
 ### Configuration
 
@@ -76,13 +87,13 @@ Exports:
 - `sql` — Tagged template client for most queries. Use this by default.
 - `getPool()` — Lazy Pool client for transactions. In workflow steps, always use `getPool()` not the direct `pool` export (which throws).
 
-Migrations (`db/migrations/` 001-014) are tracked in a `schema_migrations` table. Run `pnpm db:setup` to apply.
+Migrations (`db/migrations/` 001-019) are tracked in a `schema_migrations` table. Run `pnpm db:setup` to apply.
 
 Key tables: `agents`, `activities`, `memories`, `calls`, `tool_configs`, `agent_status`, `agent_schedules`, `users`, `telegram_users`
 
 Agent columns: `id`, `name`, `prompt`, `status`, `tools`, `skills`, `user_id`, `model_provider`, `model_id`, `drive_folder_id`, `drive_file_ids`, `parent_agent_id`, `created_at`, `updated_at`
 
-Migrations are in `db/migrations/` (001 through 014). Run sequentially.
+Migrations are in `db/migrations/` (001 through 019). Run sequentially.
 
 ### Integration Modules
 
@@ -99,6 +110,7 @@ Migrations are in `db/migrations/` (001 through 014). Run sequentially.
 ```
 app/
 ├── api/                    # Route Handlers (REST endpoints, 40+)
+│   ├── agent/             # Singular agent GET/PATCH (single agent per user)
 │   ├── agents/            # Agent CRUD + start/stop/schedule/memory/analytics
 │   ├── activities/        # Activity feed, approvals, SSE stream
 │   ├── auth/              # NextAuth [...nextauth] + Google OAuth callback
@@ -115,12 +127,11 @@ app/
 │   └── settings/          # Encrypted tool config (API keys)
 ├── login/                 # Google OAuth sign-in page
 ├── onboarding/            # OpenAI API key setup (post-signup)
-├── dashboard/             # Main dashboard UI (agents, activity feed, metrics)
-├── templates/             # Pre-built agent templates
-├── skills/                # Skills marketplace UI
+├── dashboard/             # Single agent dashboard (activity feed + status)
+├── skills/                # Skills enable/disable UI
 ├── chat/                  # Chat interface
 ├── graph/                 # Knowledge graph visualization
-└── settings/              # Settings page (API key management)
+└── settings/              # Settings (identity, heartbeat, model, integrations)
 
 lib/
 ├── ai/
@@ -129,9 +140,18 @@ lib/
 │   │   ├── types.ts       # LLMProvider interface
 │   │   ├── openai.ts      # OpenAI provider
 │   │   └── anthropic.ts   # Anthropic provider (format conversion)
+│   ├── tools/             # Modular tool system (20 tools)
+│   │   ├── types.ts       # ToolDefinition, ToolContext, ToolModule interfaces
+│   │   ├── registry.ts    # collectTools() — assembles tools based on config
+│   │   ├── core/          # Always-available: log-activity, ask-user, send-message, spawn/check sub-agent
+│   │   ├── research/      # Requires 'firecrawl': start-session, plan-queries, firecrawl-research, complete-session
+│   │   ├── memory/        # Requires 'google' + auth: read, update, append, search memory
+│   │   ├── google/        # Requires 'google': send-email, search-emails, create/list calendar events
+│   │   ├── browser/       # Requires 'browser': browser-task
+│   │   └── telegram/      # Requires 'telegram': send-telegram-message
 │   ├── workflows/         # Agent execution engine (plain async + event-driven HITL)
 │   │   ├── agent-workflow.ts  # Main workflow loop
-│   │   └── steps.ts       # ~1300 lines, all tools + step logic
+│   │   └── steps.ts       # Step functions + tool dispatch via registry
 │   ├── prompts.ts         # System prompt helpers (withHITLGuidelines, withSkills, withMemoryContext)
 │   ├── chat-history.ts    # Chat turn retrieval
 │   ├── research-context.ts # Research session context builder
@@ -144,9 +164,10 @@ lib/
 │   └── telegram.ts        # Telegram bot (grammY)
 ├── skills/
 │   ├── types.ts           # Skill interface
-│   └── registry.ts        # 6 built-in skills
+│   └── registry.ts        # Loads SKILL.md files from skills/ directory
 ├── scheduler/
-│   └── heartbeat.ts       # Process overdue agent schedules
+│   └── heartbeat.ts       # Process overdue schedules (active hours, HEARTBEAT.md)
+├── agent-helpers.ts       # getOrCreateUserAgent() — single agent auto-creation
 ├── agent-runner.ts        # Background execution via waitUntil
 ├── auth.ts                # NextAuth.js v5 config (full, server-only)
 ├── auth.config.ts         # NextAuth.js config (edge-safe, for middleware)
@@ -155,7 +176,15 @@ lib/
 ├── agent-status.ts        # Agent execution status tracking
 └── utils.ts               # cn() and shared utilities
 
-db/migrations/             # SQL migrations (001-014)
+skills/                    # SKILL.md files (project root)
+├── email-digest/SKILL.md
+├── calendar-summary/SKILL.md
+├── outreach-campaign/SKILL.md
+├── job-application/SKILL.md
+├── daily-briefing/SKILL.md
+└── research-deep-dive/SKILL.md
+
+db/migrations/             # SQL migrations (001-019)
 ```
 
 ## Environment Variables
@@ -205,7 +234,13 @@ All API routes use `NextRequest`/`NextResponse` with try/catch. Use `sql` tagged
 
 ### Adding New Workflow Tools
 
-New tools for agent workflows must be defined **inline in `executeLLMDecisionStep`** using raw OpenAI function call JSON Schema format, not the AI SDK `tool()` helper. Add the tool definition to the `tools` array and a handler in the `switch` statement. See `CONTRIBUTING.md` for detailed instructions.
+New tools are defined as modular files in `lib/ai/tools/`. Each file exports a `ToolModule` with:
+- `definition` — OpenAI function call JSON Schema (raw format, NOT the AI SDK `tool()` helper)
+- `handler` — `(args, context: ToolContext) => Promise<any>`
+- `requires` — Optional array of tool group dependencies (e.g., `['firecrawl']`)
+- `requiresAuth` — Optional boolean (tool needs a userId)
+
+Register the tool in `lib/ai/tools/registry.ts` by importing it and adding to the `ALL_TOOLS` array. The registry's `collectTools()` function handles filtering based on agent config. See `CONTRIBUTING.md` for detailed instructions.
 
 ### Adding New LLM Providers
 
@@ -217,11 +252,13 @@ Prefixes: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`. Keep subjects under 8
 
 ## Important Caveats
 
+- **Single agent model**: Each user has one primary agent, auto-created via `getOrCreateUserAgent()`. Sub-agents use `parent_agent_id` (max depth 3).
 - **WebSocket**: `app/api/twilio/stream/route.ts` is a stub — Next.js Route Handlers don't support WebSocket upgrades.
 - **Spend tracking**: Total Spend metric is mocked at $0.
-- **Tool format**: Workflow tools must use raw OpenAI JSON Schema format. Do NOT use AI SDK `tool()` helper in workflow files.
+- **Tool format**: Workflow tools must use raw OpenAI JSON Schema format. Do NOT use AI SDK `tool()` helper in tool module files.
 - **Auth config split**: `proxy.ts` uses `lib/auth.config.ts` (lightweight). API routes use `lib/auth.ts` (full, server-only). Never mix them.
 - **HITL is event-driven**: `askUser`/`sendEmail`/`createCalendarEvent` create pending activities and exit the workflow. The approve route executes the action and triggers a new run. No hooks or pausing.
+- **Sub-agents are async**: `spawnSubAgent` uses `runAgentInBackground()` (fire-and-forget). Use `checkSubAgent` to poll status.
 
 ## Supplemental Docs
 

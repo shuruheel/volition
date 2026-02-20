@@ -22,15 +22,24 @@ pnpm dev       # smoke-test in browser
 
 ## How to Add a New Workflow Tool
 
-Agent workflow tools are defined **inline** in `lib/ai/workflows/steps.ts` using raw OpenAI function call JSON Schema. Do NOT use the AI SDK `tool()` helper — it is incompatible with Vercel Workflow.
+Tools are defined as modular files in `lib/ai/tools/` using the `ToolModule` interface. Each tool is a self-contained file with a definition (OpenAI JSON Schema), a handler, and optional dependency metadata.
 
-### 1. Add the tool definition
+### 1. Create the tool file
 
-In `executeLLMDecisionStep`, add to the `tools` array (conditionally if tied to an integration):
+Create a new file in the appropriate subdirectory of `lib/ai/tools/`:
+
+- `core/` — Always-available tools (no integration requirements)
+- `research/` — Tools requiring Firecrawl (`requires: ['firecrawl']`)
+- `memory/` — Tools requiring Google Drive + auth (`requires: ['google']`, `requiresAuth: true`)
+- `google/` — Tools requiring Google APIs (`requires: ['google']`)
+- `browser/` — Tools requiring Browser-Use (`requires: ['browser']`)
+- `telegram/` — Tools requiring Telegram (`requires: ['telegram']`)
 
 ```typescript
-if (args.enabledTools.includes('my_tool')) {
-  tools.push({
+import type { ToolModule, ToolContext } from '../types';
+
+export const myTool: ToolModule = {
+  definition: {
     type: 'function',
     function: {
       name: 'myTool',
@@ -44,36 +53,101 @@ if (args.enabledTools.includes('my_tool')) {
         additionalProperties: false,
       },
     },
+  },
+
+  requires: ['my_integration'],  // Optional: tool group dependency
+  requiresAuth: true,            // Optional: requires userId
+
+  handler: async (args: { param1: string }, context: ToolContext) => {
+    try {
+      const { myFunction } = await import('@/lib/integrations/my-integration');
+      const res = await myFunction(args.param1);
+      return { success: true, ...res };
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Failed' };
+    }
+  },
+};
+```
+
+### 2. Register the tool
+
+In `lib/ai/tools/registry.ts`, import the tool and add it to the `ALL_TOOLS` array:
+
+```typescript
+import { myTool } from './my-category/my-tool';
+
+const ALL_TOOLS: ToolModule[] = [
+  // ... existing tools
+  myTool,
+];
+```
+
+The registry's `collectTools()` function will automatically include or exclude the tool based on the agent's `enabledTools` config and whether the user is authenticated.
+
+### 3. For HITL (sensitive) actions
+
+Set `context.state.awaitingHumanInput = true` in the handler to pause the workflow:
+
+```typescript
+handler: async (args: any, context: ToolContext) => {
+  // Create a pending activity for user approval
+  const { logActivityStep } = await import('@/lib/ai/workflows/steps');
+  await logActivityStep(context.agentId, 'my_pending_type', {
+    status: 'pending',
+    priority: 'high',
+    ...args,
   });
-}
+  context.state.awaitingHumanInput = true;
+  return { success: true, message: 'Awaiting user approval' };
+},
 ```
 
-### 2. Add the handler
+### 4. Using ToolContext
 
-In the same function's `switch` block:
+The `ToolContext` object provides:
+- `agentId`, `userId` — Current agent and user IDs
+- `enabledTools` — List of enabled tool groups
+- `modelProvider`, `modelId` — LLM config for sub-calls
+- `state` — Mutable state object:
+  - `awaitingHumanInput` — Set to `true` to pause workflow
+  - `currentSessionId` — Track research session
+  - `researchStarted` — Track if research has begun
+  - `researchSessionCompleted` — Signal session completion
+  - `usedSendMessage` — Track if sendMessage was called
 
-```typescript
-case 'myTool': {
-  try {
-    const { myFunction } = await import('@/lib/integrations/my-integration');
-    const res = await myFunction(args.param1);
-    result = { success: true, ...res };
-  } catch (error: any) {
-    result = { success: false, error: error?.message || 'Failed' };
-  }
-  break;
-}
+## How to Add a New Skill
+
+Skills are defined as `SKILL.md` files in the `skills/` directory at project root.
+
+### 1. Create the skill directory and file
+
+```
+skills/my-skill/SKILL.md
 ```
 
-### 3. For sensitive actions, use HITL approval
+### 2. Write the SKILL.md
 
-```typescript
-case 'myDangerousTool': {
-  const activityId = await createPendingActivityStep(agentId, 'my_type', 'high', args);
-  // ... use activityApprovalHook or emailApprovalHook to pause for user approval
-  break;
-}
+Use YAML frontmatter for metadata and markdown for instructions:
+
+```markdown
+---
+id: my-skill
+name: My Skill Name
+description: Brief description of what this skill does
+tools: [google, firecrawl]
+triggers: [heartbeat, manual]
+---
+
+## Skill: My Skill Name
+
+When this skill is active:
+1. Step one of what the agent should do
+2. Step two...
+3. Step three...
 ```
+
+The skill's instructions are injected into the agent's system prompt when enabled.
 
 ## How to Add a New Integration
 
@@ -86,6 +160,7 @@ Follow the pattern in `lib/integrations/firecrawl.ts`:
 5. Add to `validTools` array in `app/api/settings/tools/route.ts`
 6. Update types in `lib/db.ts` if adding new tool config or activity types
 7. Create a database migration in `db/migrations/` if schema changes are needed
+8. Create tool module(s) in `lib/ai/tools/` and register in the registry
 
 ## Commit Conventions
 

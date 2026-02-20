@@ -39,7 +39,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     await requireAgentOwnership(id);
     const body = await request.json();
-    const { schedule_type, interval_minutes, cron_expression, checklist, enabled } = body;
+    const { schedule_type, interval_minutes, cron_expression, checklist, enabled, active_hours_start, active_hours_end } = body;
 
     if (!schedule_type) {
       return NextResponse.json({ error: 'schedule_type is required' }, { status: 400 });
@@ -50,15 +50,17 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       : null;
 
     const result = await sql`
-      INSERT INTO agent_schedules (agent_id, schedule_type, interval_minutes, cron_expression, checklist, enabled, next_run_at)
-      VALUES (${id}, ${schedule_type}, ${interval_minutes || null}, ${cron_expression || null}, ${checklist || null}, ${enabled !== false}, ${nextRun})
+      INSERT INTO agent_schedules (agent_id, schedule_type, interval_minutes, cron_expression, checklist, enabled, next_run_at, active_hours_start, active_hours_end)
+      VALUES (${id}, ${schedule_type}, ${interval_minutes || null}, ${cron_expression || null}, ${checklist || null}, ${enabled !== false}, ${nextRun}, ${active_hours_start || '08:00'}, ${active_hours_end || '23:00'})
       ON CONFLICT (agent_id) DO UPDATE SET
         schedule_type = EXCLUDED.schedule_type,
         interval_minutes = EXCLUDED.interval_minutes,
         cron_expression = EXCLUDED.cron_expression,
         checklist = EXCLUDED.checklist,
         enabled = EXCLUDED.enabled,
-        next_run_at = EXCLUDED.next_run_at
+        next_run_at = EXCLUDED.next_run_at,
+        active_hours_start = EXCLUDED.active_hours_start,
+        active_hours_end = EXCLUDED.active_hours_end
       RETURNING *
     `;
 

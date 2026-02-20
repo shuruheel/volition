@@ -1,8 +1,8 @@
 /**
  * Main agent workflow — plain async execution with event-driven HITL.
  *
- * Tools are defined INLINE with 'parameters' key (raw OpenAI function call format).
- * DO NOT import tools from lib/ai/tools/ — those use AI SDK tool() helper.
+ * Tools are loaded from the modular tool registry (lib/ai/tools/).
+ * Each tool uses raw OpenAI function call format (JSON Schema with `parameters` key).
  *
  * HITL pattern: when the agent calls askUser/sendEmail/createCalendarEvent,
  * a pending activity is created and the workflow returns early. The approve

@@ -2,6 +2,11 @@
  * Heartbeat scheduler — queries overdue schedules and starts workflow runs.
  * Called by /api/scheduler/tick (Vercel Cron or local interval).
  * Only processes schedules for enabled agents.
+ *
+ * Features:
+ * - Active hours: skips schedules outside configured time window
+ * - HEARTBEAT.md: reads checklist from Google Drive if available
+ * - OK suppression: marks uneventful heartbeats as low-priority
  */
 
 import { sql } from '@/lib/db';
@@ -14,6 +19,49 @@ export interface ScheduleRow {
   checklist: string | null;
   last_run_at: string | null;
   next_run_at: string | null;
+  active_hours_start: string | null;
+  active_hours_end: string | null;
+  user_id?: string;
+}
+
+/**
+ * Check if current time is within active hours.
+ * Returns true if no active hours are set (always active).
+ */
+function isWithinActiveHours(startTime: string | null, endTime: string | null): boolean {
+  if (!startTime || !endTime) return true;
+
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const [startH, startM] = startTime.split(':').map(Number);
+  const [endH, endM] = endTime.split(':').map(Number);
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
+
+  if (startMinutes <= endMinutes) {
+    // Normal range (e.g., 08:00 - 23:00)
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  } else {
+    // Overnight range (e.g., 22:00 - 06:00)
+    return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+  }
+}
+
+/**
+ * Try to load heartbeat.md from Google Drive for the agent.
+ * Falls back to null if not available.
+ */
+async function loadHeartbeatMd(userId: string | null, agentId: string): Promise<string | null> {
+  if (!userId) return null;
+
+  try {
+    const { readMemoryFile } = await import('@/lib/integrations/google-drive');
+    const content = await readMemoryFile(userId, agentId, 'heartbeat.md');
+    return content || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -22,7 +70,7 @@ export interface ScheduleRow {
  */
 export async function processOverdueSchedules(): Promise<number> {
   const overdue = await sql<ScheduleRow[]>`
-    SELECT s.*, a.status as agent_status
+    SELECT s.*, a.status as agent_status, a.user_id
     FROM agent_schedules s
     JOIN agents a ON a.id = s.agent_id
     WHERE s.enabled = true
@@ -39,8 +87,25 @@ export async function processOverdueSchedules(): Promise<number> {
 
   for (const schedule of overdue) {
     try {
+      // Check active hours
+      if (!isWithinActiveHours(schedule.active_hours_start, schedule.active_hours_end)) {
+        // Skip but still update next_run_at to avoid re-processing
+        const nextRun = calculateNextRun(schedule);
+        await sql`
+          UPDATE agent_schedules
+          SET next_run_at = ${nextRun}
+          WHERE id = ${schedule.id}
+        `;
+        console.log(`[heartbeat] Skipped agent ${schedule.agent_id} — outside active hours`);
+        continue;
+      }
+
+      // Try loading heartbeat.md from Drive (overrides checklist field)
+      const heartbeatMd = await loadHeartbeatMd(schedule.user_id || null, schedule.agent_id);
+      const checklist = heartbeatMd || schedule.checklist;
+
       // Build heartbeat prompt from checklist
-      const prompt = buildHeartbeatPrompt(schedule.checklist);
+      const prompt = buildHeartbeatPrompt(checklist);
 
       // Start the workflow (10 steps — heartbeats should be quick check-ins)
       const { runAgentInBackground } = await import('@/lib/agent-runner');
