@@ -74,12 +74,18 @@ export async function resolveProviderConfig(
       const { decrypt } = await import('@/lib/crypto');
       const configs = await sql`SELECT data_encrypted FROM tool_configs WHERE user_id = ${userId} AND tool = ${provider}`;
       if (configs.length > 0 && configs[0].data_encrypted) {
-        const decrypted = JSON.parse(decrypt(configs[0].data_encrypted));
-        apiKey = decrypted.apiKey;
-        userPreferredModel = decrypted.model;
+        try {
+          const decrypted = JSON.parse(decrypt(configs[0].data_encrypted));
+          apiKey = decrypted.apiKey;
+          userPreferredModel = decrypted.model;
+        } catch (decryptErr) {
+          console.error(`[providers] Failed to decrypt ${provider} config for user ${userId}:`, decryptErr);
+          // Don't fall through silently — if config exists but can't be decrypted,
+          // and there's no env var fallback, the user needs a clear error.
+        }
       }
-    } catch {
-      // Fall through to env var
+    } catch (dbErr) {
+      console.error(`[providers] Failed to fetch ${provider} config:`, dbErr);
     }
   }
 

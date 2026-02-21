@@ -13,6 +13,7 @@ interface ToolConfig {
   id: string
   tool: string
   configured: boolean
+  decryptionError?: boolean
   maskedData?: Record<string, string>
   createdAt?: string
   updatedAt?: string
@@ -354,7 +355,9 @@ export default function SettingsPage() {
   }
 
   const getConfig = (toolId: string) => configs.find((c) => c.tool === toolId && c.configured)
+  const getToolEntry = (toolId: string) => configs.find((c) => c.tool === toolId)
   const isConfigured = (toolId: string) => !!getConfig(toolId)
+  const hasDecryptionError = (toolId: string) => !!getToolEntry(toolId)?.decryptionError
 
   const handleSelectTool = (toolId: string) => {
     setSelectedToolId(toolId)
@@ -581,6 +584,7 @@ export default function SettingsPage() {
               {TOOL_DEFINITIONS.map((tool) => {
                 const ToolIcon = tool.icon
                 const configured = isConfigured(tool.id)
+                const decryptError = hasDecryptionError(tool.id)
                 const isSelected = selectedToolId === tool.id
 
                 return (
@@ -590,12 +594,19 @@ export default function SettingsPage() {
                     className={`relative flex flex-col items-center gap-1.5 p-3 rounded-lg border text-center transition-all ${
                       isSelected
                         ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                        : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                        : decryptError
+                          ? 'border-yellow-500/50 hover:border-yellow-500 hover:bg-yellow-500/5'
+                          : 'border-border hover:border-primary/50 hover:bg-muted/50'
                     }`}
                   >
                     {configured && (
                       <div className="absolute top-1.5 right-1.5">
                         <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                      </div>
+                    )}
+                    {decryptError && (
+                      <div className="absolute top-1.5 right-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 text-yellow-500" />
                       </div>
                     )}
                     <div className={`p-1.5 rounded-md ${tool.bgColor}`}>
@@ -610,6 +621,7 @@ export default function SettingsPage() {
             {selectedTool && (() => {
               const ToolIcon = selectedTool.icon
               const configured = isConfigured(selectedTool.id)
+              const decryptError = hasDecryptionError(selectedTool.id)
               const config = getConfig(selectedTool.id)
               const testResult = testResults[selectedTool.id]
 
@@ -632,6 +644,11 @@ export default function SettingsPage() {
                             <CheckCircle2 className="h-3.5 w-3.5" />
                             <span className="text-xs font-medium">Connected</span>
                           </div>
+                        ) : decryptError ? (
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 shrink-0">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            <span className="text-xs font-medium">Re-entry needed</span>
+                          </div>
                         ) : (
                           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-muted-foreground shrink-0">
                             <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
@@ -642,6 +659,15 @@ export default function SettingsPage() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
+                        {decryptError && (
+                          <div className="p-3 rounded-lg flex items-start gap-2 bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400">
+                            <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" />
+                            <div className="text-sm">
+                              <p className="font-medium">Encryption key mismatch</p>
+                              <p>The stored credentials cannot be decrypted. This usually means the encryption key changed. Please re-enter your API key and save again.</p>
+                            </div>
+                          </div>
+                        )}
                         {selectedTool.oauth ? (
                           <div className="space-y-4">
                             <div className="flex flex-wrap gap-2">

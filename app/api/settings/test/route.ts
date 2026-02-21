@@ -6,6 +6,28 @@ import twilio from 'twilio';
 import { BrowserUseClient } from 'browser-use-sdk';
 import { generateText } from 'ai';
 
+const DECRYPT_ERROR_MSG = 'Failed to decrypt stored credentials. The encryption key may have changed. Please re-enter your API key and save again.';
+
+/**
+ * Fetch and decrypt tool config for a user. Returns the parsed data or a NextResponse error.
+ */
+async function getDecryptedConfig(userId: string, tool: string, notConfiguredMsg: string): Promise<Record<string, any> | NextResponse> {
+  const configs = await sql`
+    SELECT data_encrypted FROM tool_configs
+    WHERE user_id = ${userId} AND tool = ${tool}
+  `;
+
+  if (configs.length === 0 || !configs[0].data_encrypted) {
+    return NextResponse.json({ success: false, error: notConfiguredMsg });
+  }
+
+  try {
+    return JSON.parse(decrypt(configs[0].data_encrypted));
+  } catch {
+    return NextResponse.json({ success: false, error: DECRYPT_ERROR_MSG });
+  }
+}
+
 /**
  * POST /api/settings/test
  * Test connectivity for a specific tool
@@ -72,25 +94,13 @@ export async function POST(request: NextRequest) {
 
 async function testOpenAI(userId: string) {
   try {
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'openai'
-    `;
-
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'OpenAI not configured',
-      });
-    }
-
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
-    const apiKey = data.apiKey;
+    const result = await getDecryptedConfig(userId, 'openai', 'OpenAI not configured');
+    if (result instanceof NextResponse) return result;
 
     const { createOpenAI } = await import('@ai-sdk/openai');
-    const provider = createOpenAI({ apiKey });
+    const provider = createOpenAI({ apiKey: result.apiKey });
 
-    const result = await generateText({
+    const genResult = await generateText({
       model: provider('gpt-5-nano-2025-08-07'),
       prompt: 'Say "test successful" if you can read this.',
       maxTokens: 10,
@@ -99,7 +109,7 @@ async function testOpenAI(userId: string) {
     return NextResponse.json({
       success: true,
       message: 'OpenAI API connection successful',
-      response: result.text,
+      response: genResult.text,
     });
   } catch (error) {
     throw new Error(`OpenAI test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -108,25 +118,13 @@ async function testOpenAI(userId: string) {
 
 async function testAnthropic(userId: string) {
   try {
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'anthropic'
-    `;
-
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Anthropic not configured',
-      });
-    }
-
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
-    const apiKey = data.apiKey;
+    const result = await getDecryptedConfig(userId, 'anthropic', 'Anthropic not configured');
+    if (result instanceof NextResponse) return result;
 
     const { createAnthropic } = await import('@ai-sdk/anthropic');
-    const provider = createAnthropic({ apiKey });
+    const provider = createAnthropic({ apiKey: result.apiKey });
 
-    const result = await generateText({
+    const genResult = await generateText({
       model: provider('claude-haiku-4-5'),
       prompt: 'Say "test successful" if you can read this.',
       maxTokens: 10,
@@ -135,7 +133,7 @@ async function testAnthropic(userId: string) {
     return NextResponse.json({
       success: true,
       message: 'Anthropic API connection successful',
-      response: result.text,
+      response: genResult.text,
     });
   } catch (error) {
     throw new Error(`Anthropic test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -157,25 +155,11 @@ async function testNeon() {
 
 async function testSupermemory(userId: string) {
   try {
-    // Get Supermemory config
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'supermemory'
-    `;
+    const data = await getDecryptedConfig(userId, 'supermemory', 'Supermemory not configured');
+    if (data instanceof NextResponse) return data;
 
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Supermemory not configured',
-      });
-    }
-
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
-    const apiKey = data.apiKey;
-
-    // Test using the SDK (same as production code) with a lightweight search
     const Supermemory = (await import('supermemory')).default;
-    const sm = new Supermemory({ apiKey });
+    const sm = new Supermemory({ apiKey: data.apiKey });
     await sm.search.documents({ q: 'test', limit: 1 });
 
     return NextResponse.json({
@@ -189,26 +173,11 @@ async function testSupermemory(userId: string) {
 
 async function testBrowserUse(userId: string) {
   try {
-    // Get Browser-Use config
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'browser_use'
-    `;
-    
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Browser-Use not configured',
-      });
-    }
-    
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
-    const apiKey = data.apiKey;
-    
-    // Test client initialization
-    const client = new BrowserUseClient({ apiKey });
-    
-    // Simple test - just check if we can initialize
+    const data = await getDecryptedConfig(userId, 'browser_use', 'Browser-Use not configured');
+    if (data instanceof NextResponse) return data;
+
+    const client = new BrowserUseClient({ apiKey: data.apiKey });
+
     return NextResponse.json({
       success: true,
       message: 'Browser-Use API connection successful',
@@ -220,25 +189,12 @@ async function testBrowserUse(userId: string) {
 
 async function testTwilio(userId: string) {
   try {
-    // Get Twilio config
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'twilio'
-    `;
-    
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Twilio not configured',
-      });
-    }
-    
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
+    const data = await getDecryptedConfig(userId, 'twilio', 'Twilio not configured');
+    if (data instanceof NextResponse) return data;
+
     const client = twilio(data.accountSid, data.authToken);
-    
-    // Test by fetching account info
     const account = await client.api.accounts(data.accountSid).fetch();
-    
+
     return NextResponse.json({
       success: true,
       message: 'Twilio API connection successful',
@@ -251,26 +207,13 @@ async function testTwilio(userId: string) {
 
 async function testFirecrawl(userId: string) {
   try {
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'firecrawl'
-    `;
+    const data = await getDecryptedConfig(userId, 'firecrawl', 'Firecrawl not configured');
+    if (data instanceof NextResponse) return data;
 
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Firecrawl not configured',
-      });
-    }
-
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
-    const apiKey = data.apiKey;
-
-    // Test with a lightweight search request
     const response = await fetch('https://api.firecrawl.dev/v1/search', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${data.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ query: 'test', limit: 1 }),
@@ -292,20 +235,9 @@ async function testFirecrawl(userId: string) {
 
 async function testGoogleOAuth(userId: string) {
   try {
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'google_oauth'
-    `;
+    const data = await getDecryptedConfig(userId, 'google_oauth', 'Google account not connected. Use the "Connect Google Account" button.');
+    if (data instanceof NextResponse) return data;
 
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Google account not connected. Use the "Connect Google Account" button.',
-      });
-    }
-
-    // Verify tokens are valid by checking token info
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
     if (!data.access_token) {
       return NextResponse.json({
         success: false,
@@ -324,23 +256,10 @@ async function testGoogleOAuth(userId: string) {
 
 async function testTelegram(userId: string) {
   try {
-    const configs = await sql`
-      SELECT data_encrypted FROM tool_configs
-      WHERE user_id = ${userId} AND tool = 'telegram'
-    `;
+    const data = await getDecryptedConfig(userId, 'telegram', 'Telegram not configured');
+    if (data instanceof NextResponse) return data;
 
-    if (configs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Telegram not configured',
-      });
-    }
-
-    const data = JSON.parse(await decrypt(configs[0].data_encrypted));
-    const botToken = data.botToken;
-
-    // Test by calling getMe on the Telegram Bot API
-    const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+    const response = await fetch(`https://api.telegram.org/bot${data.botToken}/getMe`);
     const result = await response.json();
 
     if (!result.ok) {

@@ -24,8 +24,9 @@ export async function GET(request: NextRequest) {
 
     const tools = await Promise.all(configs.map(async (config: any) => {
       let maskedData: Record<string, string> = {};
+      let decryptionError = false;
       try {
-        const data = JSON.parse(await decrypt(config.data_encrypted));
+        const data = JSON.parse(decrypt(config.data_encrypted));
         for (const [key, val] of Object.entries(data)) {
           if (typeof val === 'string') {
             // Don't mask non-secret fields like model selection
@@ -36,13 +37,15 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-      } catch {
-        // Decryption failed, return without masked data
+      } catch (e) {
+        console.error(`[settings] Failed to decrypt config for tool "${config.tool}":`, e);
+        decryptionError = true;
       }
       return {
         id: config.id,
         tool: config.tool,
-        configured: true,
+        configured: !decryptionError,
+        decryptionError,
         maskedData,
         createdAt: config.created_at,
         updatedAt: config.updated_at,
