@@ -14,7 +14,7 @@ Volition solves all three with a visual, web-native platform that non-engineers 
 - **Human-in-the-Loop** — Event-driven approval system pauses execution for user approval before sensitive actions (emails, calendar events, phone calls), then resumes in a new run
 - **Dynamic Memory** — Google Drive files (any `.md` file — soul.md, preferences.md, project-notes.md) + Supermemory semantic search across all memory files
 - **Heartbeat Scheduler** — Configurable intervals with checklist-driven tasks, active hours, and HEARTBEAT.md support from Google Drive
-- **Multi-Provider LLM** — OpenAI (GPT-5.2, o3) and Anthropic (Claude Sonnet 4.5, Opus 4.6) with per-agent model selection and per-user encrypted API keys
+- **Multi-Provider LLM** — OpenAI (GPT-5.2, GPT-5, GPT-5 Mini) and Anthropic (Claude Opus 4.6, Sonnet 4.6, Haiku 4.5) with per-agent model selection and per-user encrypted API keys
 - **Skills System** — Markdown-based skills (SKILL.md) for capabilities like email digest, outreach campaigns, and job applications — enable with one click
 - **Modular Tool System** — 20 tools organized into modules (core, research, memory, google, browser, telegram) loaded dynamically based on agent config
 - **Multi-User SaaS** — Google OAuth, per-user data isolation, encrypted per-user API keys for every integration, ownership checks on all API routes
@@ -117,8 +117,8 @@ Next.js 16 App Router
 │       ├── browser/         — browser-task
 │       └── telegram/        — send-telegram-message
 ├── LLM Providers (per-user encrypted API keys)
-│   ├── OpenAI               — GPT-5.2, o3, o4-mini, GPT-4.1
-│   └── Anthropic            — Claude Sonnet 4.5, Opus 4.6, Haiku 4.5
+│   ├── OpenAI               — GPT-5.2, GPT-5, GPT-5 Mini
+│   └── Anthropic            — Claude Opus 4.6, Sonnet 4.6, Haiku 4.5
 ├── Memory System
 │   ├── Google Drive          — Per-agent .md files (dynamic filenames, append mode)
 │   └── Supermemory           — Semantic search across all memory files
